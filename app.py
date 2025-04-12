@@ -5,6 +5,7 @@ import time
 import pandas as pd
 import pydeck as pdk
 from datetime import datetime
+from typing import List, Tuple
 
 # Constants
 PROXIMITY_THRESHOLD = 4500  # in meters
