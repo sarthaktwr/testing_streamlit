@@ -1,118 +1,54 @@
 import streamlit as st
-from geopy.distance import geodesic
-import math
-import time
 import pandas as pd
+import time
 import pydeck as pdk
 from datetime import datetime
 from typing import List, Tuple
 
 # Constants
-PROXIMITY_THRESHOLD = 4500  # in meters
-REFRESH_INTERVAL = 30  # seconds for dashboard refresh
-ANIMATION_DELAY = 0.1  # seconds between animation frames
-MAX_ALERTS_TO_DISPLAY = 5  # Maximum alerts to show in history
+COLORS = {"status_background": "#f0f0f5", "button_background": "#ff6347"}
+PROXIMITY_THRESHOLD = 500  # meters (example threshold for alert)
+ANIMATION_DELAY = 0.1  # delay for animation speed
 
-# Colors
-COLORS = {
-    "red_alert": "#ff0000",
-    "yellow_warning": "#ffff00",
-    "white": "#ffffff",
-    "army_green": "#4B5320",
-    "sand": "#C2B280",
-    "status_background": "#eeeeee"
-}
+# Function to calculate zoom level based on latitude and longitude bounds
+def calculate_zoom(min_lat, max_lat, min_lon, max_lon) -> int:
+    lat_diff = max_lat - min_lat
+    lon_diff = max_lon - min_lon
+    zoom = 10  # Default zoom
+    if lat_diff > 2 or lon_diff > 2:
+        zoom = 5  # Less zoom for larger area
+    return zoom
 
-USER_ROLES = {
-    'command_center': {'username': 'command', 'password': 'center123'},
-    'ground_unit': {'username': 'ground', 'password': 'unit123'},
-    'aircraft': {'username': 'aircraft', 'password': 'flight123'}
-}
+# Function to calculate 3D distance between ground position and aircraft position
+def calculate_3d_distance(ground_loc: Tuple[float, float, float], aircraft: Tuple[float, float, float]) -> float:
+    lat1, lon1, elev1 = ground_loc
+    lat2, lon2, elev2 = aircraft
+    # Simple Euclidean distance calculation (can be replaced with Haversine for accurate lat-lon distances)
+    distance = ((lat2 - lat1) ** 2 + (lon2 - lon1) ** 2 + (elev2 - elev1) ** 2) ** 0.5
+    return distance
 
-def init_session() -> None:
-    """Initialize session state variables."""
-    if 'user_role' not in st.session_state:
-        st.session_state.user_role = None
-    if 'alerts' not in st.session_state:
-        st.session_state.alerts = {'ground_unit': [], 'aircraft': []}
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-    if 'last_refresh' not in st.session_state:
-        st.session_state.last_refresh = datetime.now()
-    if 'alert_acknowledged' not in st.session_state:
-        st.session_state.alert_acknowledged = {'ground_unit': False, 'aircraft': False}
-    if 'current_alert' not in st.session_state:
-        st.session_state.current_alert = None
-
-def login(username: str, password: str) -> bool:
-    """Authenticate user credentials."""
-    for role, creds in USER_ROLES.items():
-        if creds['username'] == username and creds['password'] == password:
-            st.session_state.user_role = role
-            st.session_state.logged_in = True
-            st.session_state.login_message = f"ACCESS GRANTED: {role.replace('_', ' ').upper()} TERMINAL"
-            return True
-    st.error('ACCESS DENIED: INVALID CREDENTIALS', icon="🔒")
-    return False
-
-def send_alert(unit: str, alert_message: str) -> None:
-    """Send alert to the specified unit."""
-    st.session_state.current_alert = alert_message
-    st.session_state.alert_acknowledged[unit] = False
-    st.session_state.alerts[unit].append(alert_message)
-    st.success(f"ALERT SENT TO {unit.replace('_', ' ').upper()}: {alert_message}")
-
-def acknowledge_alert(unit: str) -> None:
-    """Acknowledge alert from the specified unit."""
-    st.session_state.alert_acknowledged[unit] = True
-    st.success(f"{unit.replace('_', ' ').upper()} HAS ACKNOWLEDGED THE ALERT")
-
+# Function to create layers for pydeck map
 def create_layers(ground_loc: Tuple[float, float, float], path: List[List[float]]) -> List[pdk.Layer]:
-    """Create pydeck layers for visualization."""
-    ground_df = pd.DataFrame({
-        'latitude': [ground_loc[0]],
-        'longitude': [ground_loc[1]],
-        'elevation': [ground_loc[2]]
-    })
-    
-    icon_df = pd.DataFrame({
-        'coordinates': [[ground_loc[1], ground_loc[0]]],
-    })
-    
-    return [
-        pdk.Layer(
-            "PathLayer", 
-            pd.DataFrame({'path': [path]}), 
-            get_color=[139, 0, 0, 255],  # Dark Red color
-            get_path="path", 
-            width_scale=20, 
-            get_width=5
-        ),
-        pdk.Layer(
-            "ScatterplotLayer", 
-            ground_df, 
-            get_position=["longitude", "latitude"], 
-            get_fill_color=[0, 100, 0, 150], 
-            get_radius=PROXIMITY_THRESHOLD
-        ),
-        pdk.Layer(
-            "IconLayer", 
-            icon_df, 
-            get_icon={
-                "url": "https://img.icons8.com/ios-filled/50/000000/military-base.png", 
-                "width": 128, 
-                "height": 128, 
-                "anchorY": 128
-            }, 
-            get_position="coordinates", 
-            size_scale=15
-        )
-    ]
+    path_layer = pdk.Layer(
+        'PathLayer',
+        path,
+        get_path='coordinates',
+        get_width=5,
+        get_color=[255, 0, 0, 140],
+        width_scale=20,
+    )
+    return [path_layer]
 
+# Function to simulate sending alert (you can modify this to integrate actual alerting system)
+def send_alert(unit: str):
+    alert_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state.alerts[unit] = f"ALERT SENT to {unit} at {alert_time}"
+
+# Command Center Function (sending alerts to Ground Unit or Aircraft)
 def command_center() -> None:
     """Render command center dashboard."""
     st.title('🛡️ COMMAND CENTER DASHBOARD')
-    
+
     with st.expander("CONFIGURATION", expanded=True):
         col1, col2 = st.columns(2)
         with col1:
@@ -137,7 +73,7 @@ def command_center() -> None:
                 return
 
             df['path'] = df[['longitude_wgs84(deg)', 'latitude_wgs84(deg)']].values.tolist()
-            
+
             # Calculate view bounds
             min_lat, max_lat = df['latitude_wgs84(deg)'].min(), df['latitude_wgs84(deg)'].max()
             min_lon, max_lon = df['longitude_wgs84(deg)'].min(), df['longitude_wgs84(deg)'].max()
@@ -147,7 +83,7 @@ def command_center() -> None:
             view = pdk.ViewState(
                 latitude=(min_lat + max_lat) / 2, 
                 longitude=(min_lon + max_lon) / 2, 
-                zoom=10, 
+                zoom=calculate_zoom(min_lat, max_lat, min_lon, max_lon), 
                 pitch=50
             )
 
@@ -167,6 +103,7 @@ def command_center() -> None:
                     row['longitude_wgs84(deg)'], 
                     row['elevation_wgs84(m)']
                 )
+                distance = calculate_3d_distance(ground, aircraft)
 
                 # Update view to follow aircraft
                 view.latitude = aircraft[0]
@@ -184,18 +121,26 @@ def command_center() -> None:
                 <div style="padding:10px;border-radius:5px;background-color:{COLORS['status_background']};">
                     <h4>STATUS</h4>
                     <p>Aircraft Frame: {idx+1}/{len(df)}</p>
+                    <p>Distance: {distance:.2f}m</p>
+                    <p>Status: {'⚠️ ENGAGEMENT RANGE' if distance <= PROXIMITY_THRESHOLD else '✅ CLEAR'}</p>
                 </div>
                 """
                 status_box.markdown(status_text, unsafe_allow_html=True)
 
-                if st.session_state.alert_acknowledged['ground_unit'] == False and not alert_sent:
-                    if st.button(f"🚀 ALERT GROUND UNIT @ {idx}", key=f"g{idx}"):
-                        send_alert('ground_unit', f"ALERT: Aircraft in range at frame {idx+1}")
-                        alert_sent = True
-                if st.session_state.alert_acknowledged['aircraft'] == False and not alert_sent:
-                    if st.button(f"✈️ ALERT AIRCRAFT @ {idx}", key=f"a{idx}"):
-                        send_alert('aircraft', f"ALERT: Aircraft in range at frame {idx+1}")
-                        alert_sent = True
+                if distance <= PROXIMITY_THRESHOLD and not alert_sent:
+                    st.warning(f"⚠️ AIRCRAFT IN RANGE ({distance:.2f}m)")
+                    alert_cols = st.columns(2)
+                    with alert_cols[0]:
+                        if st.button("🚀 ALERT GROUND UNIT", key=f"g{idx}"):
+                            send_alert('ground_unit')
+                            alert_sent = True
+                            st.session_state.alert_sent = True  # Store alert status in session
+
+                    with alert_cols[1]:
+                        if st.button("✈️ ALERT AIRCRAFT", key=f"a{idx}"):
+                            send_alert('aircraft')
+                            alert_sent = True
+                            st.session_state.alert_sent = True  # Store alert status in session
 
                 time.sleep(ANIMATION_DELAY)
 
@@ -206,69 +151,43 @@ def command_center() -> None:
             st.error(f"PROCESSING ERROR: {str(e)}")
             st.exception(e)
 
+# Unit Interface Function (Ground Unit or Aircraft)
 def unit_interface(unit: str) -> None:
     """Render interface for ground unit or aircraft."""
     name = unit.replace("_", " ").upper()
     st.title(f"🎯 {name} DASHBOARD")
     st.markdown("---")
 
-    current_alert = st.session_state.current_alert
-    alerts = st.session_state.alerts[unit]
-    alert_acknowledged = st.session_state.alert_acknowledged[unit]
-    
-    if alerts:
-        st.subheader("ACTIVE ALERTS")
-        for alert in alerts:
-            st.write(f"• {alert}")
-
-        if current_alert and not alert_acknowledged:
-            st.warning(f"⚠️ NEW ALERT: {current_alert}")
-
+    # Check if there is a pending alert
+    if hasattr(st.session_state, 'alert_sent') and st.session_state.alert_sent:
+        st.warning("⚠️ ALERT PENDING ACKNOWLEDGEMENT")
         if st.button("✅ ACKNOWLEDGE ALERT"):
-            acknowledge_alert(unit)
-            st.session_state.current_alert = None
-            st.session_state.alert_acknowledged[unit] = True
+            st.session_state.alert_sent = False  # Reset alert status
+            st.session_state.alerts[unit] = []  # Clear any previous alerts for this unit
+            st.success("Alert Acknowledged. Ready for next alert.")
             st.session_state.last_refresh = datetime.now()
             st.rerun()
-    
     else:
-        st.success("No active alerts")
-    
-    # System status panel
-    st.markdown(f"""
-        <div style="background-color:{COLORS['army_green']};padding:10px;border-radius:5px;margin-top:20px;">
-            <h4 style="color:{COLORS['sand']};">SYSTEM STATUS</h4>
-            <p>Status: {'🔴 ALERT' if current_alert and not alert_acknowledged else '🟢 NORMAL'}</p>
-        </div>
-    """, unsafe_allow_html=True)
+        st.success("✅ NO ACTIVE ALERTS")
 
-def render_login() -> None:
-    """Render login interface."""
-    st.title("🔐 TACTICAL LOGIN")
-    with st.form("auth"):
-        username = st.text_input("OPERATOR ID")
-        password = st.text_input("ACCESS CODE", type="password")
-        if st.form_submit_button("LOGIN"):
-            if login(username, password):
-                st.rerun()
+# Main Function
+def main():
+    # Initialize session state if it doesn't exist
+    if 'alerts' not in st.session_state:
+        st.session_state.alerts = {}
+    if 'alert_sent' not in st.session_state:
+        st.session_state.alert_sent = False
+    if 'last_refresh' not in st.session_state:
+        st.session_state.last_refresh = datetime.now()
 
-def main() -> None:
-    """Main application function."""
-    init_session()
+    page = st.sidebar.radio("Select Page", ['Command Center', 'Ground Unit', 'Aircraft'])
 
-    if not st.session_state.logged_in:
-        render_login()
-    else:
-        # Show login success message if available
-        if hasattr(st.session_state, 'login_message'):
-            st.success(st.session_state.login_message)
-            del st.session_state.login_message
+    if page == 'Command Center':
+        command_center()
+    elif page == 'Ground Unit':
+        unit_interface('ground_unit')
+    elif page == 'Aircraft':
+        unit_interface('aircraft')
 
-        # Render appropriate interface based on role
-        if st.session_state.user_role == 'command_center':
-            command_center()
-        elif st.session_state.user_role in ['ground_unit', 'aircraft']:
-            unit_interface(st.session_state.user_role)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
