@@ -5,7 +5,6 @@ import time
 import pandas as pd
 import pydeck as pdk
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
 
 # Constants
 PROXIMITY_THRESHOLD = 4500  # in meters
@@ -39,6 +38,10 @@ def init_session() -> None:
         st.session_state.logged_in = False
     if 'last_refresh' not in st.session_state:
         st.session_state.last_refresh = datetime.now()
+    if 'alert_acknowledged' not in st.session_state:
+        st.session_state.alert_acknowledged = {'ground_unit': False, 'aircraft': False}
+    if 'current_alert' not in st.session_state:
+        st.session_state.current_alert = None
 
 def login(username: str, password: str) -> bool:
     """Authenticate user credentials."""
@@ -51,32 +54,19 @@ def login(username: str, password: str) -> bool:
     st.error('ACCESS DENIED: INVALID CREDENTIALS', icon="🔒")
     return False
 
-def calculate_3d_distance(loc1: Tuple[float, float, float], loc2: Tuple[float, float, float]) -> float:
-    """Calculate 3D distance between two points (lat, lon, elevation)."""
-    surface_distance = geodesic(loc1[:2], loc2[:2]).meters
-    elev_diff = abs(loc1[2] - loc2[2])
-    return math.sqrt(surface_distance ** 2 + elev_diff ** 2)
+def send_alert(unit: str, alert_message: str) -> None:
+    """Send alert to the specified unit."""
+    st.session_state.current_alert = alert_message
+    st.session_state.alert_acknowledged[unit] = False
+    st.session_state.alerts[unit].append(alert_message)
+    st.success(f"ALERT SENT TO {unit.replace('_', ' ').upper()}: {alert_message}")
 
-def check_aircraft_proximity(ground_loc: Tuple[float, float, float], 
-                           aircraft_loc: Tuple[float, float, float]) -> bool:
-    """Check if aircraft is within proximity threshold of ground location."""
-    return calculate_3d_distance(ground_loc, aircraft_loc) <= PROXIMITY_THRESHOLD
+def acknowledge_alert(unit: str) -> None:
+    """Acknowledge alert from the specified unit."""
+    st.session_state.alert_acknowledged[unit] = True
+    st.success(f"{unit.replace('_', ' ').upper()} HAS ACKNOWLEDGED THE ALERT")
 
-def send_alert(unit: str) -> None:
-    """Send alert to specified unit with timestamp."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.session_state.alerts[unit].append(timestamp)
-    # Keep only the most recent alerts
-    if len(st.session_state.alerts[unit]) > MAX_ALERTS_TO_DISPLAY:
-        st.session_state.alerts[unit] = st.session_state.alerts[unit][-MAX_ALERTS_TO_DISPLAY:]
-    st.success(f"ALERT SENT TO {unit.replace('_', ' ').upper()} @ {timestamp}", icon="⚠️")
-
-def get_active_alerts(unit: str) -> List[str]:
-    """Get active alerts for specified unit."""
-    return st.session_state.alerts.get(unit, [])
-
-def create_layers(ground_loc: Tuple[float, float, float], 
-                 path: List[List[float]]) -> List[pdk.Layer]:
+def create_layers(ground_loc: Tuple[float, float, float], path: List[List[float]]) -> List[pdk.Layer]:
     """Create pydeck layers for visualization."""
     ground_df = pd.DataFrame({
         'latitude': [ground_loc[0]],
@@ -118,26 +108,6 @@ def create_layers(ground_loc: Tuple[float, float, float],
         )
     ]
 
-def calculate_zoom(min_lat: float, max_lat: float, 
-                  min_lon: float, max_lon: float) -> int:
-    """Calculate appropriate zoom level based on area coverage."""
-    diff = max(abs(max_lat - min_lat), abs(max_lon - min_lon))
-    zoom_levels = [
-        (20, 4), (10, 5), (5, 6), 
-        (2, 7), (1, 8), (0.5, 9), 
-        (0.2, 10), (0.1, 11)
-    ]
-    for threshold, zoom in zoom_levels:
-        if diff > threshold: 
-            return zoom
-    return 12
-
-def should_refresh() -> bool:
-    """Check if dashboard should refresh based on last refresh time."""
-    if 'last_refresh' not in st.session_state:
-        return True
-    return (datetime.now() - st.session_state.last_refresh).seconds >= REFRESH_INTERVAL
-
 def command_center() -> None:
     """Render command center dashboard."""
     st.title('🛡️ COMMAND CENTER DASHBOARD')
@@ -176,7 +146,7 @@ def command_center() -> None:
             view = pdk.ViewState(
                 latitude=(min_lat + max_lat) / 2, 
                 longitude=(min_lon + max_lon) / 2, 
-                zoom=calculate_zoom(min_lat, max_lat, min_lon, max_lon), 
+                zoom=10, 
                 pitch=50
             )
 
@@ -196,7 +166,6 @@ def command_center() -> None:
                     row['longitude_wgs84(deg)'], 
                     row['elevation_wgs84(m)']
                 )
-                distance = calculate_3d_distance(ground, aircraft)
 
                 # Update view to follow aircraft
                 view.latitude = aircraft[0]
@@ -214,24 +183,19 @@ def command_center() -> None:
                 <div style="padding:10px;border-radius:5px;background-color:{COLORS['status_background']};">
                     <h4>STATUS</h4>
                     <p>Aircraft Frame: {idx+1}/{len(df)}</p>
-                    <p>Distance: {distance:.2f}m</p>
-                    <p>Status: {'⚠️ ENGAGEMENT RANGE' if distance <= PROXIMITY_THRESHOLD else '✅ CLEAR'}</p>
                 </div>
                 """
                 status_box.markdown(status_text, unsafe_allow_html=True)
 
-                if distance <= PROXIMITY_THRESHOLD and not alert_sent:
-                    st.warning(f"⚠️ AIRCRAFT IN RANGE ({distance:.2f}m)")
-                    alert_cols = st.columns(2)
-                    with alert_cols[0]:
-                        if st.button("🚀 ALERT GROUND UNIT", key=f"g{idx}"):
-                            send_alert('ground_unit')
-                            alert_sent = True
-                    with alert_cols[1]:
-                        if st.button("✈️ ALERT AIRCRAFT", key=f"a{idx}"):
-                            send_alert('aircraft')
-                            alert_sent = True
-                
+                if st.session_state.alert_acknowledged['ground_unit'] == False and not alert_sent:
+                    if st.button(f"🚀 ALERT GROUND UNIT @ {idx}", key=f"g{idx}"):
+                        send_alert('ground_unit', f"ALERT: Aircraft in range at frame {idx+1}")
+                        alert_sent = True
+                if st.session_state.alert_acknowledged['aircraft'] == False and not alert_sent:
+                    if st.button(f"✈️ ALERT AIRCRAFT @ {idx}", key=f"a{idx}"):
+                        send_alert('aircraft', f"ALERT: Aircraft in range at frame {idx+1}")
+                        alert_sent = True
+
                 time.sleep(ANIMATION_DELAY)
 
             progress_bar.empty()
@@ -247,46 +211,35 @@ def unit_interface(unit: str) -> None:
     st.title(f"🎯 {name} DASHBOARD")
     st.markdown("---")
 
-    alerts = get_active_alerts(unit)
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
+    current_alert = st.session_state.current_alert
+    alerts = st.session_state.alerts[unit]
+    alert_acknowledged = st.session_state.alert_acknowledged[unit]
+    
     if alerts:
-        with st.container():
-            st.error(f"""
-            ⚠️ HIGH ALERT
-            **ORDERS:** ACTION REQUIRED  
-            **ACTIVE THREATS:** {len(alerts)}  
-            **LAST ALERT:** {alerts[-1]}
-            """)
-            
-            if st.button("✅ ACKNOWLEDGE & CLEAR ALERTS"):
-                st.session_state.alerts[unit] = []
-                st.session_state.last_refresh = datetime.now()
-                st.rerun()
-            
-            with st.expander("ALERT HISTORY"):
-                for alert in reversed(alerts):
-                    st.write(f"• {alert}")
-    else:
-        st.success("""
-        ✅ NO ACTIVE THREATS
-        **ORDERS:** MAINTAIN POSITION
-        """)
+        st.subheader("ACTIVE ALERTS")
+        for alert in alerts:
+            st.write(f"• {alert}")
 
+        if current_alert and not alert_acknowledged:
+            st.warning(f"⚠️ NEW ALERT: {current_alert}")
+
+        if st.button("✅ ACKNOWLEDGE ALERT"):
+            acknowledge_alert(unit)
+            st.session_state.current_alert = None
+            st.session_state.alert_acknowledged[unit] = True
+            st.session_state.last_refresh = datetime.now()
+            st.rerun()
+    
+    else:
+        st.success("No active alerts")
+    
     # System status panel
     st.markdown(f"""
         <div style="background-color:{COLORS['army_green']};padding:10px;border-radius:5px;margin-top:20px;">
             <h4 style="color:{COLORS['sand']};">SYSTEM STATUS</h4>
-            <p>Time: {current_time}</p>
-            <p>Status: {'🔴 ALERT' if alerts else '🟢 NORMAL'}</p>
-            <p>Last Refresh: {st.session_state.last_refresh.strftime('%Y-%m-%d %H:%M:%S')}</p>
+            <p>Status: {'🔴 ALERT' if current_alert and not alert_acknowledged else '🟢 NORMAL'}</p>
         </div>
     """, unsafe_allow_html=True)
-
-    # Auto-refresh logic
-    if should_refresh():
-        st.session_state.last_refresh = datetime.now()
-        st.rerun()
 
 def render_login() -> None:
     """Render login interface."""
