@@ -357,10 +357,10 @@ else:
                 st.error('Keep Firing.')
             else:
                 st.error('Friendly aircraft approaching. Stop Firing !')
-        @st.cache(ttl = 30, allow_output_mutation = True, suppress_st_warning = True)
-        def rerun_in_seconds(seconds):
-            time.sleep(seconds)
-            return
+        # @st.cache(ttl = 30, allow_output_mutation = True, suppress_st_warning = True)
+        # def rerun_in_seconds(seconds):
+        #     time.sleep(seconds)
+        #     return
         
         # if rerun_in_seconds(30):
         #     st.experimental_rerun()
