@@ -369,9 +369,9 @@ else:
             else:
                 st.error('Clearance to fly.')
         @st.cache(ttl = 30, allow_output_mutation = True, suppress_st_warning = True)
-        def rerun_in_seconds(seconds):
-            time.sleep(seconds)
-            return
+        # def rerun_in_seconds(seconds):
+        #     time.sleep(seconds)
+        #     return
         
         # if rerun_in_seconds(30):
         #     st.experimental_rerun()
