@@ -172,6 +172,12 @@ if st.session_state['user_role'] is None:
     password = st.text_input('Password', type='password')
     if st.button('Login'):
         login_user(username, password)
+    # Logout button
+    if st.session_state['user_role'] is not None:
+        if st.button('Logout'):
+            st.session_state['user_role'] = None
+            st.session_state['alert_sent'] = False
+            st.write("You have been logged out.")
 
 # App functionality based on user role
 
@@ -376,11 +382,5 @@ else:
         # if rerun_in_seconds(30):
         #     st.experimental_rerun()
 
-# Logout button
-if st.session_state['user_role'] is not None:
-    if st.button('Logout'):
-        st.session_state['user_role'] = None
-        st.session_state['alert_sent'] = False
-        st.write("You have been logged out.")
 
 
