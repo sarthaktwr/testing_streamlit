@@ -10,7 +10,7 @@ from typing import Dict, List, Tuple, Optional
 # Constants
 PROXIMITY_THRESHOLD = 4500  # in meters
 REFRESH_INTERVAL = 30  # seconds for dashboard refresh
-ANIMATION_DELAY = 5  # seconds between animation frames
+ANIMATION_DELAY = 0.1  # seconds between animation frames
 MAX_ALERTS_TO_DISPLAY = 5  # Maximum alerts to show in history
 
 # Colors
