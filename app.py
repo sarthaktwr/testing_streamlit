@@ -92,7 +92,7 @@ def create_layers(ground_loc: Tuple[float, float, float],
         pdk.Layer(
             "PathLayer", 
             pd.DataFrame({'path': [path]}), 
-            get_color=[139, 0, 0, 180], 
+            get_color=[139, 0, 0, 255],  # Dark Red color
             get_path="path", 
             width_scale=20, 
             get_width=5
@@ -313,20 +313,8 @@ def main() -> None:
         # Render appropriate interface based on role
         if st.session_state.user_role == 'command_center':
             command_center()
-        else:
+        elif st.session_state.user_role in ['ground_unit', 'aircraft']:
             unit_interface(st.session_state.user_role)
 
-        # Logout button
-        if st.button("🔒 LOGOUT"):
-            st.session_state.clear()
-            st.success("LOGOUT SUCCESSFUL")
-            time.sleep(1)
-            st.rerun()
-
 if __name__ == '__main__':
-    st.set_page_config(
-        page_title="Tactical Aircraft Threat Detection",
-        page_icon="🛡️",
-        layout="wide"
-    )
     main()
