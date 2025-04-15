@@ -13,25 +13,59 @@ USER_CREDENTIALS = {
 # Constants
 AIRCRAFT_ICON_URL = "https://cdn-icons-png.flaticon.com/512/287/287221.png"
 BOMB_ICON_URL = "https://cdn-icons-png.flaticon.com/512/4389/4389779.png"
-PROXIMITY_THRESHOLD = 500
+PROXIMITY_THRESHOLD = 500  # meters
 
 # Helper Functions
 def calculate_3d_distance(ground, aircraft):
     lat1, lon1, elev1 = ground
     lat2, lon2, elev2 = aircraft
-    return ((lat2 - lat1)**2 + (lon2 - lon1)**2 + (elev2 - elev1)**2) ** 0.5
+    # Convert degrees to meters (approx. 111,111 meters per degree)
+    lat_dist = (lat2 - lat1) * 111111
+    lon_dist = (lon2 - lon1) * 111111 * abs(math.cos(math.radians(lat1)))
+    elev_dist = elev2 - elev1
+    return (lat_dist**2 + lon_dist**2 + elev_dist**2) ** 0.5
 
 def create_layers(ground, path, current_aircraft_pos):
+    ground_pos = [ground[1], ground[0]]  # Note: PyDeck expects [lon, lat]
     return [
-        pdk.Layer("PathLayer", data=[{"coordinates": path}], get_path="coordinates", get_color=[255, 0, 0], width_scale=20, get_width=5),
-        pdk.Layer("ScatterplotLayer", data=[{"position": [ground[1], ground[0]]}], get_position="position", get_color=[0, 128, 0], get_radius=100),
-        pdk.Layer("IconLayer", data=[
-            {"position": current_aircraft_pos, "icon": {"url": AIRCRAFT_ICON_URL, "width": 128, "height": 128, "anchorY": 128}},
-            {"position": [ground[1], ground[0]], "icon": {"url": BOMB_ICON_URL, "width": 128, "height": 128, "anchorY": 128}},
-        ], get_icon="icon", get_size=4, size_scale=15, get_position="position")
+        pdk.Layer(
+            "PathLayer",
+            data=[{"coordinates": path}],
+            get_path="coordinates",
+            get_color=[255, 0, 0],
+            width_scale=20,
+            get_width=5
+        ),
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=[{"position": ground_pos}],
+            get_position="position",
+            get_color=[0, 255, 0],
+            get_radius=500,
+            pickable=True
+        ),
+        pdk.Layer(
+            "IconLayer",
+            data=[
+                {
+                    "position": current_aircraft_pos,
+                    "icon_data": AIRCRAFT_ICON_URL
+                },
+                {
+                    "position": ground_pos,
+                    "icon_data": BOMB_ICON_URL
+                }
+            ],
+            get_icon="icon_data",
+            get_size=4,
+            size_scale=15,
+            get_position="position",
+            pickable=True
+        )
     ]
 
 def send_priority(unit, message):
+    st.session_state.fwg_messages[unit.lower()] = message
     st.toast(f"FWG message broadcast to {unit}: {message}")
 
 # Dashboards
@@ -59,22 +93,31 @@ def command_center_dashboard():
             return
 
         df['path'] = df[['longitude_wgs84(deg)', 'latitude_wgs84(deg)']].values.tolist()
-        view = pdk.ViewState(latitude=ground[0], longitude=ground[1], zoom=10, pitch=50)
+        view = pdk.ViewState(
+            latitude=ground[0],
+            longitude=ground[1],
+            zoom=10,
+            pitch=50
+        )
         path = []
         map_placeholder = st.empty()
         info_placeholder = st.empty()
 
         for idx, row in df.iterrows():
-            path.append(row['path'])
+            path.append([row['longitude_wgs84(deg)'], row['latitude_wgs84(deg)']])
             aircraft = (row['latitude_wgs84(deg)'], row['longitude_wgs84(deg)'], row['elevation_wgs84(m)'])
             aircraft_pos = [row['longitude_wgs84(deg)'], row['latitude_wgs84(deg)']]
             distance = calculate_3d_distance(ground, aircraft)
 
             layers = create_layers(ground, path, aircraft_pos)
-            map_placeholder.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=view, map_style='mapbox://styles/mapbox/satellite-streets-v11'))
+            map_placeholder.pydeck_chart(pdk.Deck(
+                layers=layers,
+                initial_view_state=view,
+                map_style='mapbox://styles/mapbox/satellite-streets-v11'
+            ))
             info_placeholder.info(f"Frame {idx+1}/{len(df)} | Distance: {distance:.2f}m")
 
-            if distance <= PROXIMITY_THRESHOLD and not st.session_state.priority_sent:
+            if distance <= PROXIMITY_THRESHOLD and not st.session_state.get('priority_sent', False):
                 st.warning("⚠️ Aircraft in PRIORITY range")
                 priority = st.radio("Send priority to:", ["Aircraft", "Gun"], key=f"priority_{idx}")
                 if st.button("Send Priority", key=f"send_priority_{idx}"):
@@ -85,20 +128,27 @@ def command_center_dashboard():
                         send_priority("gun", "Continue Firing")
                         send_priority("aircraft", "Danger Area Reroute immediately")
                     st.session_state.priority_sent = True
+                    st.rerun()
             time.sleep(0.1)
 
 def unit_dashboard(unit_name):
     st.title(f"🎯 {unit_name.upper()} DASHBOARD")
-    msg = st.session_state.fwg_messages.get(unit_name)
+    msg = st.session_state.fwg_messages.get(unit_name.lower(), "")
+    
     if msg:
-        st.warning(f"📨 FWG Message: {msg}")
+        st.warning(f"📨 PRIORITY Message: {msg}")
         if st.button("Acknowledge"):
-            st.session_state.fwg_messages[unit_name] = ""
+            st.session_state.fwg_messages[unit_name.lower()] = ""
             st.session_state.priority_sent = False
             st.success("Acknowledged. Awaiting further instruction.")
+            time.sleep(1)
             st.rerun()
     else:
         st.success("✅ No active messages.")
+    
+    # Keep the command center running in the background
+    if st.session_state.role == "command":
+        st.experimental_rerun()
 
 # Login
 def login():
@@ -107,24 +157,21 @@ def login():
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     
-    # Convert the role name to lowercase to match the keys in USER_CREDENTIALS
-    role_key = role.lower().replace(" ", "")  # Maps "Command Center" to "command"
-    
     if st.button("Login"):
-        # Debugging lines to check what is being selected and compared
-        st.write(f"Selected Role: {role_key}")  # To confirm role selection
-        cred = USER_CREDENTIALS.get(role_key)
-        st.write(f"Credentials fetched: {cred}")  # To confirm credentials are fetched
+        # Convert role to match USER_CREDENTIALS keys
+        role_key = role.lower().replace(" center", "").replace(" unit", "").strip()
         
+        cred = USER_CREDENTIALS.get(role_key)
         if cred and username == cred["username"] and password == cred["password"]:
             st.session_state.logged_in = True
             st.session_state.role = role_key
+            st.session_state.fwg_messages = st.session_state.get('fwg_messages', {})
+            st.session_state.priority_sent = st.session_state.get('priority_sent', False)
             st.success(f"Logged in as {role}")
-            st.experimental_rerun()  # Trigger a rerun to load the correct dashboard
+            time.sleep(1)
+            st.experimental_rerun()
         else:
             st.error("Invalid credentials.")
-
-
 
 # Main
 def main():
@@ -145,7 +192,7 @@ def main():
         if st.sidebar.button("Logout"):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
-            st.rerun()
+            st.experimental_rerun()
 
         if role == "command":
             command_center_dashboard()
@@ -155,4 +202,5 @@ def main():
             unit_dashboard("aircraft")
 
 if __name__ == "__main__":
+    import math  # Added for distance calculation
     main()
