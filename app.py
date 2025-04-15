@@ -106,15 +106,22 @@ def login():
     role = st.selectbox("Login As", ["Command Center", "Ground Unit", "Aircraft"])
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
+    
+    st.write(f"Role: {role}, Username: {username}, Password: {password}")  # Debugging line
+    
     if st.button("Login"):
         key = role.lower().replace(" ", "")
         cred = USER_CREDENTIALS.get(key)
+        
+        st.write(f"Credentials: {cred}")  # Debugging line
+        
         if cred and username == cred["username"] and password == cred["password"]:
             st.session_state.logged_in = True
             st.session_state.role = key
             st.success(f"Logged in as {role}")
         else:
             st.error("Invalid credentials.")
+
 
 # Main
 def main():
