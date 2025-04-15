@@ -13,7 +13,7 @@ USER_CREDENTIALS = {
 # Constants
 AIRCRAFT_ICON_URL = "https://cdn-icons-png.flaticon.com/512/287/287221.png"
 BOMB_ICON_URL = "https://cdn-icons-png.flaticon.com/512/4389/4389779.png"
-PROXIMITY_THRESHOLD = 500
+PROXIMITY_THRESHOLD = 5000
 
 # Helper Functions
 def calculate_3d_distance(ground, aircraft):
