@@ -9,9 +9,9 @@ from typing import List, Tuple
 PROXIMITY_THRESHOLD = 500  # meters
 ANIMATION_DELAY = 0.1  # seconds
 
-# GIF URLs
-AIRPLANE_GIF_URL = "https://media.giphy.com/media/WFZvB7VIXBgiz3oDXE/giphy.gif"
-BOMBING_GIF_URL = "https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif"
+# Icon URLs
+AIRPLANE_ICON_URL = "https://cdn-icons-png.flaticon.com/512/808/808484.png"
+BOMB_ICON_URL = "https://cdn-icons-png.flaticon.com/512/3460/3460388.png"
 
 # Session state initialization
 if 'alerts' not in st.session_state:
@@ -23,15 +23,59 @@ if 'alert_sent' not in st.session_state:
 def calculate_3d_distance(p1: Tuple[float, float, float], p2: Tuple[float, float, float]) -> float:
     return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2 + (p1[2] - p2[2])**2) ** 0.5
 
-def create_layers(ground_loc: Tuple[float, float, float], path: List[List[float]]) -> List[pdk.Layer]:
-    return [pdk.Layer(
+def create_layers(ground_loc: Tuple[float, float, float], path: List[List[float]], aircraft_pos: Tuple[float, float], show_bomb: bool) -> List[pdk.Layer]:
+    layers = []
+
+    # Path Layer
+    layers.append(pdk.Layer(
         'PathLayer',
         [{'coordinates': path}],
         get_path='coordinates',
         get_width=5,
         get_color=[255, 0, 0],
         width_scale=20
-    )]
+    ))
+
+    # Aircraft Icon
+    layers.append(pdk.Layer(
+        'IconLayer',
+        data=[{
+            'position': [aircraft_pos[1], aircraft_pos[0]],
+            'icon_data': {
+                'url': AIRPLANE_ICON_URL,
+                'width': 128,
+                'height': 128,
+                'anchorY': 128,
+            },
+        }],
+        get_icon='icon_data',
+        get_size=4,
+        size_scale=10,
+        get_position='position',
+        pickable=False
+    ))
+
+    # Bomb Icon on Ground (if aircraft is in range)
+    if show_bomb:
+        layers.append(pdk.Layer(
+            'IconLayer',
+            data=[{
+                'position': [ground_loc[1], ground_loc[0]],
+                'icon_data': {
+                    'url': BOMB_ICON_URL,
+                    'width': 128,
+                    'height': 128,
+                    'anchorY': 128,
+                },
+            }],
+            get_icon='icon_data',
+            get_size=4,
+            size_scale=10,
+            get_position='position',
+            pickable=False
+        ))
+
+    return layers
 
 def send_alert(unit: str):
     st.session_state.alerts[unit] = f"ALERT SENT to {unit} at {datetime.now().strftime('%H:%M:%S')}"
@@ -65,7 +109,6 @@ def command_center():
             path = []
             chart = st.empty()
             status = st.empty()
-            gif_display = st.empty()
             progress = st.progress(0)
 
             for i, row in df.iterrows():
@@ -77,34 +120,32 @@ def command_center():
                 distance = calculate_3d_distance(ground, aircraft_pos)
                 path.append([aircraft_pos[1], aircraft_pos[0]])  # lon, lat
 
-                # Map view
                 view_state = pdk.ViewState(
                     latitude=aircraft_pos[0],
                     longitude=aircraft_pos[1],
                     zoom=10,
                     pitch=45
                 )
+
+                show_bomb = distance <= PROXIMITY_THRESHOLD
+                layers = create_layers(ground, path, aircraft_pos, show_bomb)
+
                 chart.pydeck_chart(pdk.Deck(
-                    layers=create_layers(ground, path),
+                    layers=layers,
                     initial_view_state=view_state,
                     map_style='mapbox://styles/mapbox/satellite-streets-v11'
                 ))
 
-                # Distance status
                 status.metric("Distance (m)", f"{distance:.2f}")
                 progress.progress((i + 1) / len(df))
 
-                # Display airplane gif
-                gif_display.image(AIRPLANE_GIF_URL, width=100)
-
-                # Bombing gif if within range
-                if distance <= PROXIMITY_THRESHOLD and not st.session_state.alert_sent:
+                if show_bomb and not st.session_state.alert_sent:
                     st.warning(f"🚨 Aircraft within {distance:.2f}m! Engage?")
-                    st.image(BOMBING_GIF_URL, width=150)
-                    if st.button("🚀 ALERT GROUND UNIT"):
+                    col_a, col_b = st.columns(2)
+                    if col_a.button("🚀 ALERT GROUND UNIT", key=f"g{row.name}"):
                         send_alert("ground_unit")
                         st.success("Alert sent to Ground Unit!")
-                    if st.button("✈️ ALERT AIRCRAFT"):
+                    if col_b.button("✈️ ALERT AIRCRAFT", key=f"a{row.name}"):
                         send_alert("aircraft")
                         st.success("Alert sent to Aircraft!")
 
