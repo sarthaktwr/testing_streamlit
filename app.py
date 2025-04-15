@@ -1,4 +1,6 @@
 import streamlit as st
+import pandas as pd
+import pydeck as pdk
 import time
 
 # User Credentials
@@ -8,8 +10,95 @@ USER_CREDENTIALS = {
     "aircraft": {"username": "aircraft", "password": "123"},
 }
 
-# Global Constants
-PROXIMITY_THRESHOLD = 500  # Example threshold (distance in meters)
+# Constants
+AIRCRAFT_ICON_URL = "https://cdn-icons-png.flaticon.com/512/287/287221.png"
+BOMB_ICON_URL = "https://cdn-icons-png.flaticon.com/512/4389/4389779.png"
+PROXIMITY_THRESHOLD = 500
+
+# Helper Functions
+def calculate_3d_distance(ground, aircraft):
+    lat1, lon1, elev1 = ground
+    lat2, lon2, elev2 = aircraft
+    return ((lat2 - lat1)**2 + (lon2 - lon1)**2 + (elev2 - elev1)**2) ** 0.5
+
+def create_layers(ground, path, current_aircraft_pos):
+    return [
+        pdk.Layer("PathLayer", data=[{"coordinates": path}], get_path="coordinates", get_color=[255, 0, 0], width_scale=20, get_width=5),
+        pdk.Layer("ScatterplotLayer", data=[{"position": [ground[1], ground[0]]}], get_position="position", get_color=[0, 128, 0], get_radius=100),
+        pdk.Layer("IconLayer", data=[
+            {"position": current_aircraft_pos, "icon": {"url": AIRCRAFT_ICON_URL, "width": 128, "height": 128, "anchorY": 128}},
+            {"position": [ground[1], ground[0]], "icon": {"url": BOMB_ICON_URL, "width": 128, "height": 128, "anchorY": 128}},
+        ], get_icon="icon", get_size=4, size_scale=15, get_position="position")
+    ]
+
+def send_priority(unit, message):
+    st.toast(f"FWG message broadcast to {unit}: {message}")
+
+# Dashboards
+def command_center_dashboard():
+    st.title("🛡️ COMMAND CENTER DASHBOARD")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader('GROUND POSITION')
+        ground = (
+            st.number_input('LATITUDE', value=28.6139, format='%f', key='lat'),
+            st.number_input('LONGITUDE', value=77.2090, format='%f', key='lon'),
+            st.number_input('ELEVATION (m)', value=0.0, format='%f', key='elev')
+        )
+
+    with col2:
+        st.subheader('AIRCRAFT PATH')
+        csv = st.file_uploader("Upload Aircraft CSV", type="csv")
+
+    if csv:
+        df = pd.read_csv(csv)
+        req = ['latitude_wgs84(deg)', 'longitude_wgs84(deg)', 'elevation_wgs84(m)']
+        if not all(c in df.columns for c in req):
+            st.error("CSV missing required columns.")
+            return
+
+        df['path'] = df[['longitude_wgs84(deg)', 'latitude_wgs84(deg)']].values.tolist()
+        view = pdk.ViewState(latitude=ground[0], longitude=ground[1], zoom=10, pitch=50)
+        path = []
+        map_placeholder = st.empty()
+        info_placeholder = st.empty()
+
+        for idx, row in df.iterrows():
+            path.append(row['path'])
+            aircraft = (row['latitude_wgs84(deg)'], row['longitude_wgs84(deg)'], row['elevation_wgs84(m)'])
+            aircraft_pos = [row['longitude_wgs84(deg)'], row['latitude_wgs84(deg)']]
+            distance = calculate_3d_distance(ground, aircraft)
+
+            layers = create_layers(ground, path, aircraft_pos)
+            map_placeholder.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=view, map_style='mapbox://styles/mapbox/satellite-streets-v11'))
+            info_placeholder.info(f"Frame {idx+1}/{len(df)} | Distance: {distance:.2f}m")
+
+            if distance <= PROXIMITY_THRESHOLD and not st.session_state.priority_sent:
+                st.warning("⚠️ Aircraft in PRIORITY range")
+                priority = st.radio("Send priority to:", ["Aircraft", "Gun"], key=f"priority_{idx}")
+                if st.button("Send Priority", key=f"send_priority_{idx}"):
+                    if priority == "Aircraft":
+                        send_priority("gun", "Stop Firing")
+                        send_priority("aircraft", "Clearance to continue flight")
+                    else:
+                        send_priority("gun", "Continue Firing")
+                        send_priority("aircraft", "Danger Area Reroute immediately")
+                    st.session_state.priority_sent = True
+            time.sleep(0.1)
+
+def unit_dashboard(unit_name):
+    st.title(f"🎯 {unit_name.upper()} DASHBOARD")
+    msg = st.session_state.fwg_messages.get(unit_name)
+    if msg:
+        st.warning(f"📨 FWG Message: {msg}")
+        if st.button("Acknowledge"):
+            st.session_state.fwg_messages[unit_name] = ""
+            st.session_state.priority_sent = False
+            st.success("Acknowledged. Awaiting further instruction.")
+            st.rerun()
+    else:
+        st.success("✅ No active messages.")
 
 # Login
 def login():
@@ -17,85 +106,43 @@ def login():
     role = st.selectbox("Login As", ["Command Center", "Ground Unit", "Aircraft"])
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
-    
     if st.button("Login"):
-        role_key_map = {
-            "Command Center": "command",
-            "Ground Unit": "ground",
-            "Aircraft": "aircraft"
-        }
-        role_key = role_key_map.get(role, None)
-        
-        # Check credentials
-        cred = USER_CREDENTIALS.get(role_key)
+        key = role.lower().replace(" ", "")
+        cred = USER_CREDENTIALS.get(key)
         if cred and username == cred["username"] and password == cred["password"]:
             st.session_state.logged_in = True
-            st.session_state.role = role_key
-            st.session_state.alert_sent = False  # Reset alert flag on login
+            st.session_state.role = key
             st.success(f"Logged in as {role}")
-            st.experimental_rerun()  # Trigger a rerun to load the correct dashboard
         else:
-            st.error("Invalid credentials. Please check your username and password.")
+            st.error("Invalid credentials.")
 
-# Handle messages and alerts
-def handle_alert(distance):
-    if distance <= PROXIMITY_THRESHOLD and not st.session_state.alert_sent:
-        st.warning("⚠️ Aircraft in PRIORITY range")
-        st.session_state.alert_sent = True  # Set the flag to prevent further alerts
-
-# Main dashboard
-def main_dashboard():
-    # Simulate some kind of input that would trigger alerts
-    st.title("Main Dashboard")
-    
-    # Use the session state to keep track of previously entered messages
-    if 'alert_sent' not in st.session_state:
-        st.session_state.alert_sent = False
-    
-    # Simulate ground and aircraft positions (example data)
-    ground_position = [28.6139, 77.2090, 0.0]  # Lat, Lon, Elevation
-    aircraft_position = [28.6239, 77.2190, 500.0]  # Lat, Lon, Elevation
-    
-    # Calculate distance (simple 2D for now, you can expand to 3D if needed)
-    distance = ((aircraft_position[0] - ground_position[0])**2 + (aircraft_position[1] - ground_position[1])**2) ** 0.5
-    st.write(f"Distance: {distance:.2f} meters")
-    
-    handle_alert(distance)  # Check for alert condition
-    
-    # Allow the user to manually reset the alert if necessary
-    if st.button("Reset Alert"):
-        st.session_state.alert_sent = False
-        st.success("Alert has been reset.")
-    
 # Main
 def main():
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
     if 'role' not in st.session_state:
         st.session_state.role = None
+    if 'fwg_messages' not in st.session_state:
+        st.session_state.fwg_messages = {}
+    if 'priority_sent' not in st.session_state:
+        st.session_state.priority_sent = False
 
-    # If not logged in, show the login screen
     if not st.session_state.logged_in:
         login()
     else:
         role = st.session_state.role
         st.sidebar.success(f"Logged in as {role.upper()}")
-        
-        # Handle dashboard depending on role
-        if role == "command":
-            main_dashboard()
-        elif role == "ground":
-            st.title("Ground Unit Dashboard")
-            st.write("Welcome to the Ground Unit dashboard!")
-        elif role == "aircraft":
-            st.title("Aircraft Dashboard")
-            st.write("Welcome to the Aircraft dashboard!")
-
         if st.sidebar.button("Logout"):
-            # Reset session state variables when logging out
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
-            st.experimental_rerun()  # Rerun the app to reset to login screen
+            st.rerun()
+
+        if role == "command":
+            command_center_dashboard()
+        elif role == "ground":
+            unit_dashboard("gun")
+        elif role == "aircraft":
+            unit_dashboard("aircraft")
 
 if __name__ == "__main__":
     main()
