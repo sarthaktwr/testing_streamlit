@@ -1,22 +1,52 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import pydeck as pdk
 import time
+import asyncio
+import threading
+import websockets
 
-# -------- User credentials (simple dictionary) --------
+# WebSocket Client Class
+class WSClient:
+    def __init__(self, url):
+        self.url = url
+        self.message_callback = None
+        self.connected = False
+        self.websocket = None
+
+    async def connect(self):
+        async with websockets.connect(self.url) as websocket:
+            self.connected = True
+            self.websocket = websocket
+            while True:
+                message = await websocket.recv()
+                if self.message_callback:
+                    self.message_callback(message)
+
+    def start(self):
+        threading.Thread(target=asyncio.run, args=(self.connect(),), daemon=True).start()
+
+    async def send(self, message):
+        if self.connected and self.websocket:
+            await self.websocket.send(message)
+
+    def on_message(self, callback):
+        self.message_callback = callback
+
+# User Credentials
 USER_CREDENTIALS = {
     "command": {"username": "command", "password": "123"},
     "ground": {"username": "ground", "password": "123"},
     "aircraft": {"username": "aircraft", "password": "123"},
 }
 
-# -------- Icon URLs --------
+# Constants
 AIRCRAFT_ICON_URL = "https://cdn-icons-png.flaticon.com/512/287/287221.png"
 BOMB_ICON_URL = "https://cdn-icons-png.flaticon.com/512/4389/4389779.png"
-
 PROXIMITY_THRESHOLD = 500
 
-# -------- Helper Functions --------
+# Helper Functions
 def calculate_3d_distance(ground, aircraft):
     lat1, lon1, elev1 = ground
     lat2, lon2, elev2 = aircraft
@@ -33,10 +63,11 @@ def create_layers(ground, path, current_aircraft_pos):
     ]
 
 def send_priority(unit, message):
-    st.session_state.fwg_messages[unit] = message
-    st.toast(f"FWG message sent to {unit}: {message}")
+    full_msg = f"{unit}:{message}"
+    asyncio.run(st.session_state.ws_client.send(full_msg))
+    st.toast(f"FWG message broadcast: {message}")
 
-# -------- Dashboards --------
+# Dashboards
 def command_center_dashboard():
     st.title("🛡️ COMMAND CENTER DASHBOARD")
     col1, col2 = st.columns(2)
@@ -74,7 +105,6 @@ def command_center_dashboard():
 
             layers = create_layers(ground, path, aircraft_pos)
             map_placeholder.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=view, map_style='mapbox://styles/mapbox/satellite-streets-v11'))
-
             info_placeholder.info(f"Frame {idx+1}/{len(df)} | Distance: {distance:.2f}m")
 
             if distance <= PROXIMITY_THRESHOLD and not st.session_state.priority_sent:
@@ -103,10 +133,9 @@ def unit_dashboard(unit_name):
     else:
         st.success("✅ No active messages.")
 
-# -------- Auth --------
+# Login
 def login():
     st.title("🔐 Secure Login")
-
     role = st.selectbox("Login As", ["Command Center", "Ground Unit", "Aircraft"])
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
@@ -121,7 +150,7 @@ def login():
         else:
             st.error("Invalid credentials.")
 
-# -------- Main App --------
+# Main
 def main():
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
@@ -131,6 +160,19 @@ def main():
         st.session_state.fwg_messages = {}
     if 'priority_sent' not in st.session_state:
         st.session_state.priority_sent = False
+    if 'ws_client' not in st.session_state:
+        ws = WSClient("ws://localhost:8000/ws")
+
+        def handle_msg(msg):
+            parts = msg.split(":")
+            if len(parts) == 2:
+                st.session_state.fwg_messages[parts[0]] = parts[1]
+                st.session_state.priority_sent = False
+                st.experimental_rerun()
+
+        ws.on_message(handle_msg)
+        ws.start()
+        st.session_state.ws_client = ws
 
     if not st.session_state.logged_in:
         login()
