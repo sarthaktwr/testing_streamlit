@@ -14,7 +14,7 @@ USER_CREDENTIALS = {
 # Constants
 AIRCRAFT_ICON_URL = "https://cdn-icons-png.flaticon.com/512/287/287221.png"
 BOMB_ICON_URL = "https://cdn-icons-png.flaticon.com/512/4389/4389779.png"
-PROXIMITY_THRESHOLD = 5500  # meters
+PROXIMITY_THRESHOLD = 500  # meters
 
 # Helper Functions
 def calculate_3d_distance(ground, aircraft):
@@ -60,8 +60,9 @@ def create_layers(ground, path, current_aircraft_pos):
     ]
 
 def send_priority(unit, message):
-    st.session_state.fwg_messages[unit.lower()] = message
-    st.toast(f"PRIORITY message sent to {unit}: {message}")
+    if unit.lower() not in st.session_state.fwg_messages or st.session_state.fwg_messages[unit.lower()] != message:
+        st.session_state.fwg_messages[unit.lower()] = message
+        st.toast(f"PRIORITY message sent to {unit}: {message}")
 
 # Dashboards
 def command_center_dashboard():
@@ -128,10 +129,18 @@ def command_center_dashboard():
 
 def unit_dashboard(unit_name):
     st.title(f"🎯 {unit_name.upper()} DASHBOARD")
-    msg = st.session_state.fwg_messages.get(unit_name.lower(), "")
     
-    if msg:
-        st.warning(f"📨 PRIORITY Message: {msg}")
+    # Initialize message in session state if not exists
+    if 'fwg_messages' not in st.session_state:
+        st.session_state.fwg_messages = {}
+    if unit_name.lower() not in st.session_state.fwg_messages:
+        st.session_state.fwg_messages[unit_name.lower()] = ""
+    
+    # Display current message
+    current_msg = st.session_state.fwg_messages.get(unit_name.lower(), "")
+    
+    if current_msg:
+        st.warning(f"📨 PRIORITY Message: {current_msg}")
         if st.button("Acknowledge"):
             st.session_state.fwg_messages[unit_name.lower()] = ""
             st.session_state.priority_sent = False
@@ -156,8 +165,10 @@ def login():
         if cred and username == cred["username"] and password == cred["password"]:
             st.session_state.logged_in = True
             st.session_state.role = role_key
-            st.session_state.fwg_messages = st.session_state.get('fwg_messages', {})
-            st.session_state.priority_sent = st.session_state.get('priority_sent', False)
+            if 'fwg_messages' not in st.session_state:
+                st.session_state.fwg_messages = {}
+            if 'priority_sent' not in st.session_state:
+                st.session_state.priority_sent = False
             st.success(f"Logged in as {role}")
             time.sleep(1)
             st.rerun()
@@ -166,6 +177,7 @@ def login():
 
 # Main
 def main():
+    # Initialize session state variables
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
     if 'role' not in st.session_state:
