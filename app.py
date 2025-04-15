@@ -3,6 +3,7 @@ import pandas as pd
 import pydeck as pdk
 import time
 import math
+from datetime import datetime
 
 # User Credentials
 USER_CREDENTIALS = {
@@ -18,22 +19,23 @@ PROXIMITY_THRESHOLD = 4500  # meters
 
 # Initialize all session state variables
 def init_session_state():
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-    if 'role' not in st.session_state:
-        st.session_state.role = None
-    if 'fwg_messages' not in st.session_state:
-        st.session_state.fwg_messages = {"gun": "", "aircraft": ""}
-    if 'priority_sent' not in st.session_state:
-        st.session_state.priority_sent = False
-    if 'proximity_alert_shown' not in st.session_state:
-        st.session_state.proximity_alert_shown = False
-    if 'in_proximity' not in st.session_state:
-        st.session_state.in_proximity = False
-    if 'alert_frame' not in st.session_state:
-        st.session_state.alert_frame = -1
-    if 'ground_position' not in st.session_state:
-        st.session_state.ground_position = (28.6139, 77.2090, 0.0)
+    required_states = {
+        'logged_in': False,
+        'role': None,
+        'fwg_messages': {"gun": "", "aircraft": ""},
+        'message_status': {"gun": False, "aircraft": False},
+        'priority_sent': False,
+        'proximity_alert_shown': False,
+        'in_proximity': False,
+        'alert_frame': -1,
+        'ground_position': (28.6139, 77.2090, 0.0),
+        'alert_log': [],
+        'acknowledged': {"gun": False, "aircraft": False}
+    }
+    
+    for key, value in required_states.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 # Helper Functions
 def calculate_3d_distance(ground, aircraft):
@@ -79,12 +81,31 @@ def create_layers(ground, path, current_aircraft_pos):
     ]
 
 def send_priority(unit, message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.session_state.fwg_messages[unit.lower()] = message
+    st.session_state.message_status[unit.lower()] = True
+    st.session_state.acknowledged[unit.lower()] = False
+    st.session_state.alert_log.append({
+        "timestamp": timestamp,
+        "unit": unit,
+        "message": message,
+        "status": "Sent"
+    })
     st.toast(f"PRIORITY message sent to {unit}: {message}")
+
+def log_acknowledgment(unit):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for log in reversed(st.session_state.alert_log):
+        if log["unit"].lower() == unit.lower() and log["status"] == "Sent":
+            log["status"] = "Acknowledged"
+            log["ack_time"] = timestamp
+            break
 
 # Dashboards
 def command_center_dashboard():
     st.title("🛡️ COMMAND CENTER DASHBOARD")
+    
+    # Layout columns
     col1, col2 = st.columns(2)
 
     with col1:
@@ -98,6 +119,14 @@ def command_center_dashboard():
     with col2:
         st.subheader('AIRCRAFT PATH')
         csv = st.file_uploader("Upload Aircraft CSV", type="csv")
+
+    # Alert Log Section
+    st.subheader("📜 ALERT LOG")
+    if st.session_state.alert_log:
+        log_df = pd.DataFrame(st.session_state.alert_log)
+        st.dataframe(log_df)
+    else:
+        st.info("No alerts sent yet")
 
     if csv:
         df = pd.read_csv(csv)
@@ -130,7 +159,7 @@ def command_center_dashboard():
             ))
             info_placeholder.info(f"Frame {idx+1}/{len(df)} | Distance: {distance:.2f}m")
 
-            # Check proximity only if we haven't shown alert for this frame yet
+            # Proximity check
             if (distance <= PROXIMITY_THRESHOLD and 
                 not st.session_state.proximity_alert_shown and
                 st.session_state.alert_frame != idx):
@@ -139,7 +168,7 @@ def command_center_dashboard():
                 st.session_state.in_proximity = True
                 st.warning("⚠️ Aircraft in PRIORITY range (4500m)")
                 
-            # Show priority options only if in proximity and no message sent yet
+            # Priority sending
             if st.session_state.in_proximity and not st.session_state.priority_sent:
                 priority = st.radio("Send priority to:", ["Aircraft", "Gun"], key=f"priority_{idx}")
                 if st.button("Send Priority", key=f"send_priority_{idx}"):
@@ -165,19 +194,26 @@ def command_center_dashboard():
 def unit_dashboard(unit_name):
     st.title(f"🎯 {unit_name.upper()} DASHBOARD")
     
-    # Get current message for this unit
+    # Display current message
     current_msg = st.session_state.fwg_messages.get(unit_name.lower(), "")
+    message_active = st.session_state.message_status.get(unit_name.lower(), False)
     
-    if current_msg:
-        st.warning(f"📨 PRIORITY Message: {current_msg}")
-        if st.button("Acknowledge"):
-            st.session_state.fwg_messages[unit_name.lower()] = ""
-            st.session_state.priority_sent = False
-            st.success("Acknowledged. Awaiting further instruction.")
-            time.sleep(1)
-            st.rerun()
+    if message_active and current_msg:
+        with st.container(border=True):
+            st.warning(f"📨 PRIORITY Message: {current_msg}")
+            if st.button("Acknowledge", key=f"ack_{unit_name}"):
+                st.session_state.message_status[unit_name.lower()] = False
+                st.session_state.acknowledged[unit_name.lower()] = True
+                log_acknowledgment(unit_name)
+                st.success("✅ Acknowledged")
+                time.sleep(1)
+                st.rerun()
     else:
-        st.success("✅ No active messages.")
+        st.success("✅ No active messages")
+    
+    # Display acknowledgment status
+    if st.session_state.acknowledged.get(unit_name.lower(), False):
+        st.info("Last message acknowledged")
 
 # Login
 def login():
