@@ -14,7 +14,26 @@ USER_CREDENTIALS = {
 # Constants
 AIRCRAFT_ICON_URL = "https://cdn-icons-png.flaticon.com/512/287/287221.png"
 BOMB_ICON_URL = "https://cdn-icons-png.flaticon.com/512/4389/4389779.png"
-PROXIMITY_THRESHOLD = 4500  # meters (changed to 4500 as requested)
+PROXIMITY_THRESHOLD = 4500  # meters
+
+# Initialize all session state variables
+def init_session_state():
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    if 'role' not in st.session_state:
+        st.session_state.role = None
+    if 'fwg_messages' not in st.session_state:
+        st.session_state.fwg_messages = {"gun": "", "aircraft": ""}
+    if 'priority_sent' not in st.session_state:
+        st.session_state.priority_sent = False
+    if 'proximity_alert_shown' not in st.session_state:
+        st.session_state.proximity_alert_shown = False
+    if 'in_proximity' not in st.session_state:
+        st.session_state.in_proximity = False
+    if 'alert_frame' not in st.session_state:
+        st.session_state.alert_frame = -1
+    if 'ground_position' not in st.session_state:
+        st.session_state.ground_position = (28.6139, 77.2090, 0.0)
 
 # Helper Functions
 def calculate_3d_distance(ground, aircraft):
@@ -61,7 +80,6 @@ def create_layers(ground, path, current_aircraft_pos):
 
 def send_priority(unit, message):
     st.session_state.fwg_messages[unit.lower()] = message
-    st.session_state.last_message_sent = time.time()
     st.toast(f"PRIORITY message sent to {unit}: {message}")
 
 # Dashboards
@@ -71,7 +89,7 @@ def command_center_dashboard():
 
     with col1:
         st.subheader('GROUND POSITION')
-        ground = (
+        st.session_state.ground_position = (
             st.number_input('LATITUDE', value=28.6139, format='%f', key='lat'),
             st.number_input('LONGITUDE', value=77.2090, format='%f', key='lon'),
             st.number_input('ELEVATION (m)', value=0.0, format='%f', key='elev')
@@ -89,8 +107,8 @@ def command_center_dashboard():
             return
 
         view = pdk.ViewState(
-            latitude=ground[0],
-            longitude=ground[1],
+            latitude=st.session_state.ground_position[0],
+            longitude=st.session_state.ground_position[1],
             zoom=10,
             pitch=50
         )
@@ -102,9 +120,9 @@ def command_center_dashboard():
             path.append([row['longitude_wgs84(deg)'], row['latitude_wgs84(deg)']])
             aircraft = (row['latitude_wgs84(deg)'], row['longitude_wgs84(deg)'], row['elevation_wgs84(m)'])
             aircraft_pos = [row['longitude_wgs84(deg)'], row['latitude_wgs84(deg)']]
-            distance = calculate_3d_distance(ground, aircraft)
+            distance = calculate_3d_distance(st.session_state.ground_position, aircraft)
 
-            layers = create_layers(ground, path, aircraft_pos)
+            layers = create_layers(st.session_state.ground_position, path, aircraft_pos)
             map_placeholder.pydeck_chart(pdk.Deck(
                 layers=layers,
                 initial_view_state=view,
@@ -112,16 +130,17 @@ def command_center_dashboard():
             ))
             info_placeholder.info(f"Frame {idx+1}/{len(df)} | Distance: {distance:.2f}m")
 
-            # Check if we're in proximity and haven't shown alert yet for this approach
+            # Check proximity only if we haven't shown alert for this frame yet
             if (distance <= PROXIMITY_THRESHOLD and 
-                not st.session_state.get('proximity_alert_shown', False)):
+                not st.session_state.proximity_alert_shown and
+                st.session_state.alert_frame != idx):
                 st.session_state.proximity_alert_shown = True
+                st.session_state.alert_frame = idx
                 st.session_state.in_proximity = True
                 st.warning("⚠️ Aircraft in PRIORITY range (4500m)")
                 
-            # Only show priority options if in proximity and no message sent yet
-            if (st.session_state.get('in_proximity', False) and 
-                not st.session_state.get('priority_sent', False)):
+            # Show priority options only if in proximity and no message sent yet
+            if st.session_state.in_proximity and not st.session_state.priority_sent:
                 priority = st.radio("Send priority to:", ["Aircraft", "Gun"], key=f"priority_{idx}")
                 if st.button("Send Priority", key=f"send_priority_{idx}"):
                     if priority == "Aircraft":
@@ -135,7 +154,7 @@ def command_center_dashboard():
                     time.sleep(1)
                     st.rerun()
             
-            # Reset alert if aircraft moves out of proximity
+            # Reset if aircraft moves out of proximity
             if distance > PROXIMITY_THRESHOLD:
                 st.session_state.proximity_alert_shown = False
                 st.session_state.in_proximity = False
@@ -145,10 +164,6 @@ def command_center_dashboard():
 
 def unit_dashboard(unit_name):
     st.title(f"🎯 {unit_name.upper()} DASHBOARD")
-    
-    # Initialize message tracking
-    if 'fwg_messages' not in st.session_state:
-        st.session_state.fwg_messages = {unit_name.lower(): ""}
     
     # Get current message for this unit
     current_msg = st.session_state.fwg_messages.get(unit_name.lower(), "")
@@ -177,12 +192,9 @@ def login():
         
         cred = USER_CREDENTIALS.get(role_key)
         if cred and username == cred["username"] and password == cred["password"]:
+            init_session_state()
             st.session_state.logged_in = True
             st.session_state.role = role_key
-            st.session_state.fwg_messages = {}
-            st.session_state.priority_sent = False
-            st.session_state.proximity_alert_shown = False
-            st.session_state.in_proximity = False
             st.success(f"Logged in as {role}")
             time.sleep(1)
             st.rerun()
@@ -191,19 +203,7 @@ def login():
 
 # Main
 def main():
-    # Initialize all session state variables
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-    if 'role' not in st.session_state:
-        st.session_state.role = None
-    if 'fwg_messages' not in st.session_state:
-        st.session_state.fwg_messages = {}
-    if 'priority_sent' not in st.session_state:
-        st.session_state.priority_sent = False
-    if 'proximity_alert_shown' not in st.session_state:
-        st.session_state.proximity_alert_shown = False
-    if 'in_proximity' not in st.session_state:
-        st.session_state.in_proximity = False
+    init_session_state()
 
     if not st.session_state.logged_in:
         login()
