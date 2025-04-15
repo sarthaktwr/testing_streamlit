@@ -24,11 +24,7 @@ class WSClient:
                     self.message_callback(message)
 
     def start(self):
-        def run_loop():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.connect())
-        threading.Thread(target=run_loop, daemon=True).start()
+        threading.Thread(target=asyncio.run, args=(self.connect(),), daemon=True).start()
 
     async def send(self, message):
         if self.connected and self.websocket:
@@ -67,12 +63,7 @@ def create_layers(ground, path, current_aircraft_pos):
 
 def send_priority(unit, message):
     full_msg = f"{unit}:{message}"
-
-    # Use async function to send the message
-    async def async_send():
-        await st.session_state.ws_client.send(full_msg)
-    asyncio.create_task(async_send())
-    
+    asyncio.run(st.session_state.ws_client.send(full_msg))
     st.toast(f"FWG message broadcast: {message}")
 
 # Dashboards
