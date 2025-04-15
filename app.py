@@ -32,7 +32,9 @@ def create_layers(ground, path, current_aircraft_pos):
     ]
 
 def send_priority(unit, message):
-    st.toast(f"FWG message broadcast to {unit}: {message}")
+    # Simulate sending a priority message by updating session state
+    st.session_state.fwg_messages[unit] = message
+    st.toast(f"FWG message broadcast: {message}")
 
 # Dashboards
 def command_center_dashboard():
@@ -79,10 +81,10 @@ def command_center_dashboard():
                 priority = st.radio("Send priority to:", ["Aircraft", "Gun"], key=f"priority_{idx}")
                 if st.button("Send Priority", key=f"send_priority_{idx}"):
                     if priority == "Aircraft":
-                        send_priority("gun", "Stop Firing")
+                        send_priority("ground", "Stop Firing")
                         send_priority("aircraft", "Clearance to continue flight")
                     else:
-                        send_priority("gun", "Continue Firing")
+                        send_priority("ground", "Continue Firing")
                         send_priority("aircraft", "Danger Area Reroute immediately")
                     st.session_state.priority_sent = True
             time.sleep(0.1)
@@ -141,7 +143,7 @@ def main():
         if role == "command":
             command_center_dashboard()
         elif role == "ground":
-            unit_dashboard("gun")
+            unit_dashboard("ground")
         elif role == "aircraft":
             unit_dashboard("aircraft")
 
