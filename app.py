@@ -30,7 +30,8 @@ def init_session_state():
         'alert_frame': -1,
         'ground_position': (28.6139, 77.2090, 0.0),
         'alert_log': [],
-        'acknowledged': {"gun": False, "aircraft": False}
+        'acknowledged': {"gun": False, "aircraft": False},
+        'unit_logs': {"gun": [], "aircraft": []}  # Separate logs for each unit
     }
     
     for key, value in required_states.items():
@@ -85,18 +86,40 @@ def send_priority(unit, message):
     st.session_state.fwg_messages[unit.lower()] = message
     st.session_state.message_status[unit.lower()] = True
     st.session_state.acknowledged[unit.lower()] = False
-    st.session_state.alert_log.append({
+    
+    # Add to main alert log
+    log_entry = {
         "timestamp": timestamp,
         "unit": unit,
         "message": message,
-        "status": "Sent"
+        "status": "Sent",
+        "ack_time": ""
+    }
+    st.session_state.alert_log.append(log_entry)
+    
+    # Add to unit-specific log
+    st.session_state.unit_logs[unit.lower()].append({
+        "timestamp": timestamp,
+        "message": message,
+        "status": "Sent",
+        "ack_time": ""
     })
+    
     st.toast(f"PRIORITY message sent to {unit}: {message}")
 
 def log_acknowledgment(unit):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Update main alert log
     for log in reversed(st.session_state.alert_log):
         if log["unit"].lower() == unit.lower() and log["status"] == "Sent":
+            log["status"] = "Acknowledged"
+            log["ack_time"] = timestamp
+            break
+    
+    # Update unit-specific log
+    for log in reversed(st.session_state.unit_logs[unit.lower()]):
+        if log["status"] == "Sent":
             log["status"] = "Acknowledged"
             log["ack_time"] = timestamp
             break
@@ -121,10 +144,20 @@ def command_center_dashboard():
         csv = st.file_uploader("Upload Aircraft CSV", type="csv")
 
     # Alert Log Section
-    st.subheader("📜 ALERT LOG")
+    st.subheader("📜 FULL ALERT LOG")
     if st.session_state.alert_log:
         log_df = pd.DataFrame(st.session_state.alert_log)
-        st.dataframe(log_df)
+        st.dataframe(
+            log_df,
+            column_config={
+                "timestamp": "Time Sent",
+                "unit": "Recipient",
+                "message": "Priority Message",
+                "status": "Status",
+                "ack_time": "Ack Time"
+            },
+            use_container_width=True
+        )
     else:
         st.info("No alerts sent yet")
 
@@ -194,10 +227,11 @@ def command_center_dashboard():
 def unit_dashboard(unit_name):
     st.title(f"🎯 {unit_name.upper()} DASHBOARD")
     
-    # Display current message
+    # Current Message Section
     current_msg = st.session_state.fwg_messages.get(unit_name.lower(), "")
     message_active = st.session_state.message_status.get(unit_name.lower(), False)
     
+    st.subheader("✉️ CURRENT MESSAGE")
     if message_active and current_msg:
         with st.container(border=True):
             st.warning(f"📨 PRIORITY Message: {current_msg}")
@@ -211,9 +245,22 @@ def unit_dashboard(unit_name):
     else:
         st.success("✅ No active messages")
     
-    # Display acknowledgment status
-    if st.session_state.acknowledged.get(unit_name.lower(), False):
-        st.info("Last message acknowledged")
+    # Message History Section
+    st.subheader("📜 MESSAGE HISTORY")
+    if st.session_state.unit_logs.get(unit_name.lower()):
+        unit_log_df = pd.DataFrame(st.session_state.unit_logs[unit_name.lower()])
+        st.dataframe(
+            unit_log_df,
+            column_config={
+                "timestamp": "Time Sent",
+                "message": "Priority Message",
+                "status": "Status",
+                "ack_time": "Acknowledged At"
+            },
+            use_container_width=True
+        )
+    else:
+        st.info("No message history available")
 
 # Login
 def login():
