@@ -107,20 +107,23 @@ def login():
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     
-    st.write(f"Role: {role}, Username: {username}, Password: {password}")  # Debugging line
+    # Convert the role name to lowercase to match the keys in USER_CREDENTIALS
+    role_key = role.lower().replace(" ", "")  # Maps "Command Center" to "command"
     
     if st.button("Login"):
-        key = role.lower().replace(" ", "")
-        cred = USER_CREDENTIALS.get(key)
-        
-        st.write(f"Credentials: {cred}")  # Debugging line
+        # Debugging lines to check what is being selected and compared
+        st.write(f"Selected Role: {role_key}")  # To confirm role selection
+        cred = USER_CREDENTIALS.get(role_key)
+        st.write(f"Credentials fetched: {cred}")  # To confirm credentials are fetched
         
         if cred and username == cred["username"] and password == cred["password"]:
             st.session_state.logged_in = True
-            st.session_state.role = key
+            st.session_state.role = role_key
             st.success(f"Logged in as {role}")
+            st.experimental_rerun()  # Trigger a rerun to load the correct dashboard
         else:
             st.error("Invalid credentials.")
+
 
 
 # Main
