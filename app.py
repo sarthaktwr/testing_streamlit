@@ -6,178 +6,187 @@ from datetime import datetime
 from typing import List, Tuple
 
 # Constants
+COLORS = {"status_background": "#f0f0f5", "button_background": "#ff6347"}
 PROXIMITY_THRESHOLD = 500  # meters
-ANIMATION_DELAY = 0.1  # seconds
+ANIMATION_DELAY = 0.1
 
-# Icon URLs
-AIRPLANE_ICON_URL = "https://cdn-icons-png.flaticon.com/512/808/808484.png"
-BOMB_ICON_URL = "https://cdn-icons-png.flaticon.com/512/3460/3460388.png"
+# Icons
+AIRCRAFT_ICON_URL = "https://cdn-icons-png.flaticon.com/512/287/287221.png"
+BOMB_ICON_URL = "https://cdn-icons-png.flaticon.com/512/4389/4389779.png"
 
-# Session state initialization
-if 'alerts' not in st.session_state:
-    st.session_state.alerts = {}
-if 'alert_sent' not in st.session_state:
-    st.session_state.alert_sent = False
+def calculate_zoom(min_lat, max_lat, min_lon, max_lon) -> int:
+    lat_diff = max_lat - min_lat
+    lon_diff = max_lon - min_lon
+    zoom = 10
+    if lat_diff > 2 or lon_diff > 2:
+        zoom = 5
+    return zoom
 
-# Utility functions
-def calculate_3d_distance(p1: Tuple[float, float, float], p2: Tuple[float, float, float]) -> float:
-    return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2 + (p1[2] - p2[2])**2) ** 0.5
+def calculate_3d_distance(ground_loc: Tuple[float, float, float], aircraft: Tuple[float, float, float]) -> float:
+    lat1, lon1, elev1 = ground_loc
+    lat2, lon2, elev2 = aircraft
+    distance = ((lat2 - lat1) ** 2 + (lon2 - lon1) ** 2 + (elev2 - elev1) ** 2) ** 0.5
+    return distance
 
-def create_layers(ground_loc: Tuple[float, float, float], path: List[List[float]], aircraft_pos: Tuple[float, float], show_bomb: bool) -> List[pdk.Layer]:
-    layers = []
-
-    # Path Layer
-    layers.append(pdk.Layer(
-        'PathLayer',
-        [{'coordinates': path}],
-        get_path='coordinates',
-        get_width=5,
-        get_color=[255, 0, 0],
-        width_scale=20
-    ))
-
-    # Aircraft Icon
-    layers.append(pdk.Layer(
-        'IconLayer',
-        data=[{
-            'position': [aircraft_pos[1], aircraft_pos[0]],
-            'icon_data': {
-                'url': AIRPLANE_ICON_URL,
-                'width': 128,
-                'height': 128,
-                'anchorY': 128,
-            },
-        }],
-        get_icon='icon_data',
-        get_size=4,
-        size_scale=10,
-        get_position='position',
-        pickable=False
-    ))
-
-    # Bomb Icon on Ground (if aircraft is in range)
-    if show_bomb:
-        layers.append(pdk.Layer(
-            'IconLayer',
-            data=[{
-                'position': [ground_loc[1], ground_loc[0]],
-                'icon_data': {
-                    'url': BOMB_ICON_URL,
-                    'width': 128,
-                    'height': 128,
-                    'anchorY': 128,
-                },
-            }],
-            get_icon='icon_data',
-            get_size=4,
-            size_scale=10,
+def create_layers(ground_loc: Tuple[float, float, float], path: List[List[float]], current_aircraft_pos: List[float]) -> List[pdk.Layer]:
+    layers = [
+        pdk.Layer(
+            'PathLayer',
+            data=[{"coordinates": path}],
+            get_path='coordinates',
+            get_width=5,
+            get_color=[255, 0, 0],
+            width_scale=20,
+        ),
+        pdk.Layer(
+            'ScatterplotLayer',
+            data=[{"position": [ground_loc[1], ground_loc[0]]}],
             get_position='position',
-            pickable=False
-        ))
-
+            get_color=[0, 128, 0],
+            get_radius=100,
+            pickable=True
+        ),
+        pdk.Layer(
+            "IconLayer",
+            data=[
+                {
+                    "position": current_aircraft_pos,
+                    "icon": {"url": AIRCRAFT_ICON_URL, "width": 128, "height": 128, "anchorY": 128}
+                },
+                {
+                    "position": [ground_loc[1], ground_loc[0]],
+                    "icon": {"url": BOMB_ICON_URL, "width": 128, "height": 128, "anchorY": 128}
+                }
+            ],
+            get_icon="icon",
+            get_size=4,
+            size_scale=15,
+            get_position="position"
+        )
+    ]
     return layers
 
-def send_alert(unit: str):
-    st.session_state.alerts[unit] = f"ALERT SENT to {unit} at {datetime.now().strftime('%H:%M:%S')}"
-    st.session_state.alert_sent = True
+def send_priority(unit: str, message: str):
+    st.session_state.fwg_messages[unit] = message
+    st.toast(f"FWG message sent to {unit}: {message}")
 
-# Command center page
 def command_center():
-    st.title("🛡️ Command Center")
+    st.title('🛡️ COMMAND CENTER DASHBOARD')
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Ground Location")
-        ground = (
-            st.number_input("Latitude", value=28.6139),
-            st.number_input("Longitude", value=77.2090),
-            st.number_input("Elevation (m)", value=0.0),
-        )
+    with st.expander("CONFIGURATION", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader('GROUND POSITION')
+            ground = (
+                st.number_input('LATITUDE', value=28.6139, format='%f', key='lat'),
+                st.number_input('LONGITUDE', value=77.2090, format='%f', key='lon'),
+                st.number_input('ELEVATION (m)', value=0.0, format='%f', key='elev')
+            )
 
-    with col2:
-        st.subheader("Upload Aircraft Path CSV")
-        uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+        with col2:
+            st.subheader('AIRCRAFT PATH')
+            csv = st.file_uploader("UPLOAD CSV", type="csv", help="CSV with latitude, longitude, elevation")
 
-    if uploaded_file:
+    if csv:
         try:
-            df = pd.read_csv(uploaded_file)
+            df = pd.read_csv(csv)
             req_cols = ['latitude_wgs84(deg)', 'longitude_wgs84(deg)', 'elevation_wgs84(m)']
             if not all(col in df.columns for col in req_cols):
-                st.error("CSV missing required columns.")
+                st.error(f'MISSING COLUMNS: {", ".join(req_cols)}')
                 return
 
+            df['path'] = df[['longitude_wgs84(deg)', 'latitude_wgs84(deg)']].values.tolist()
+            min_lat, max_lat = df['latitude_wgs84(deg)'].min(), df['latitude_wgs84(deg)'].max()
+            min_lon, max_lon = df['longitude_wgs84(deg)'].min(), df['longitude_wgs84(deg)'].max()
+            min_lat, max_lat = min(min_lat, ground[0]), max(max_lat, ground[0])
+            min_lon, max_lon = min(min_lon, ground[1]), max(max_lon, ground[1])
+
+            view = pdk.ViewState(
+                latitude=(min_lat + max_lat) / 2,
+                longitude=(min_lon + max_lon) / 2,
+                zoom=calculate_zoom(min_lat, max_lat, min_lon, max_lon),
+                pitch=50
+            )
+
             path = []
-            chart = st.empty()
-            status = st.empty()
-            progress = st.progress(0)
+            map_area = st.empty()
+            status_box = st.empty()
+            progress_bar = st.progress(0)
 
-            for i, row in df.iterrows():
-                aircraft_pos = (
-                    row['latitude_wgs84(deg)'],
-                    row['longitude_wgs84(deg)'],
-                    row['elevation_wgs84(m)']
-                )
-                distance = calculate_3d_distance(ground, aircraft_pos)
-                path.append([aircraft_pos[1], aircraft_pos[0]])  # lon, lat
+            for idx, row in df.iterrows():
+                progress_bar.progress((idx + 1) / len(df))
+                path.append(row['path'])
+                aircraft = (row['latitude_wgs84(deg)'], row['longitude_wgs84(deg)'], row['elevation_wgs84(m)'])
+                aircraft_pos = [row['longitude_wgs84(deg)'], row['latitude_wgs84(deg)']]
+                distance = calculate_3d_distance(ground, aircraft)
 
-                view_state = pdk.ViewState(
-                    latitude=aircraft_pos[0],
-                    longitude=aircraft_pos[1],
-                    zoom=10,
-                    pitch=45
-                )
+                view.latitude, view.longitude = aircraft[0], aircraft[1]
+                layers = create_layers(ground, path, aircraft_pos)
 
-                show_bomb = distance <= PROXIMITY_THRESHOLD
-                layers = create_layers(ground, path, aircraft_pos, show_bomb)
-
-                chart.pydeck_chart(pdk.Deck(
+                map_area.pydeck_chart(pdk.Deck(
                     layers=layers,
-                    initial_view_state=view_state,
+                    initial_view_state=view,
                     map_style='mapbox://styles/mapbox/satellite-streets-v11'
                 ))
 
-                status.metric("Distance (m)", f"{distance:.2f}")
-                progress.progress((i + 1) / len(df))
+                status_box.markdown(f"""
+                <div style="padding:10px;background-color:{COLORS['status_background']};border-radius:5px;">
+                    <h4>STATUS</h4>
+                    <p>Aircraft Frame: {idx+1}/{len(df)}</p>
+                    <p>Distance: {distance:.2f}m</p>
+                    <p>Status: {'⚠️ PRIORITY RANGE' if distance <= PROXIMITY_THRESHOLD else '✅ CLEAR'}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
-                if show_bomb and not st.session_state.alert_sent:
-                    st.warning(f"🚨 Aircraft within {distance:.2f}m! Engage?")
-                    col_a, col_b = st.columns(2)
-                    if col_a.button("🚀 ALERT GROUND UNIT", key=f"g{row.name}"):
-                        send_alert("ground_unit")
-                        st.success("Alert sent to Ground Unit!")
-                    if col_b.button("✈️ ALERT AIRCRAFT", key=f"a{row.name}"):
-                        send_alert("aircraft")
-                        st.success("Alert sent to Aircraft!")
+                if distance <= PROXIMITY_THRESHOLD and not st.session_state.priority_sent:
+                    st.warning(f"⚠️ AIRCRAFT IN RANGE ({distance:.2f}m)")
+                    priority_to = st.radio("Send Priority To:", ["Aircraft", "Gun"], key=f"priority_{idx}")
+                    if st.button("🚨 SEND PRIORITY", key=f"send_priority_{idx}"):
+                        if priority_to == "Aircraft":
+                            send_priority("gun", "Stop Firing")
+                            send_priority("aircraft", "Clearance to continue flight")
+                        else:
+                            send_priority("gun", "Continue Firing")
+                            send_priority("aircraft", "Danger Area Reroute immediately")
+                        st.session_state.priority_sent = True
 
                 time.sleep(ANIMATION_DELAY)
 
-            st.success("✔️ Simulation complete.")
+            progress_bar.empty()
+            st.success("✅ Simulation complete")
+
         except Exception as e:
-            st.error("Failed to process the CSV.")
-            st.exception(e)
+            st.error(f"Error: {str(e)}")
 
-# Ground Unit or Aircraft Page
-def unit_dashboard(unit_name: str):
-    st.title(f"🎯 {unit_name.replace('_', ' ').upper()} Dashboard")
+def unit_interface(unit: str):
+    name = unit.replace("_", " ").upper()
+    st.title(f"🎯 {name} DASHBOARD")
+    st.markdown("---")
 
-    if st.session_state.alerts.get(unit_name):
-        st.warning(st.session_state.alerts[unit_name])
-        if st.button("✅ Acknowledge Alert"):
-            st.session_state.alerts[unit_name] = ""
-            st.session_state.alert_sent = False
-            st.success("Alert acknowledged.")
+    if st.session_state.fwg_messages.get(unit):
+        st.warning(f"📨 FWG Message: {st.session_state.fwg_messages[unit]}")
+        if st.button("✅ Acknowledge"):
+            st.session_state.fwg_messages[unit] = ""
+            st.session_state.priority_sent = False
+            st.success("Acknowledged. Awaiting further instruction.")
+            st.rerun()
     else:
-        st.success("✅ No alerts.")
+        st.success("✅ NO ACTIVE MESSAGES")
 
-# Main app
 def main():
-    page = st.sidebar.radio("Select Role", ["Command Center", "Ground Unit", "Aircraft"])
-    if page == "Command Center":
+    if 'fwg_messages' not in st.session_state:
+        st.session_state.fwg_messages = {}
+    if 'priority_sent' not in st.session_state:
+        st.session_state.priority_sent = False
+
+    page = st.sidebar.radio("Select Page", ['Command Center', 'Ground Unit', 'Aircraft'])
+
+    if page == 'Command Center':
         command_center()
-    elif page == "Ground Unit":
-        unit_dashboard("ground_unit")
-    else:
-        unit_dashboard("aircraft")
+    elif page == 'Ground Unit':
+        unit_interface('gun')
+    elif page == 'Aircraft':
+        unit_interface('aircraft')
 
 if __name__ == "__main__":
     main()
