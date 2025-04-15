@@ -6,4 +6,4 @@ gspread
 oauth2client
 geopandas
 shapely
-websocket
+websockets
