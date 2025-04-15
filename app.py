@@ -103,21 +103,30 @@ def unit_dashboard(unit_name):
         st.success("✅ No active messages.")
 
 # Login
+# Login
 def login():
     st.title("🔐 Secure Login")
     role = st.selectbox("Login As", ["Command Center", "Ground Unit", "Aircraft"])
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
+    
     if st.button("Login"):
-        key = role.lower().replace(" ", "")
+        key = role.lower().replace(" ", "")  # e.g., "command", "ground", "aircraft"
         cred = USER_CREDENTIALS.get(key)
+        
+        # Debugging: print credentials and inputs for troubleshooting
+        st.write(f"Checking credentials for role: {role}")
+        st.write(f"Entered Username: {username}")
+        st.write(f"Stored Username: {cred['username'] if cred else 'N/A'}")
+        
         if cred and username == cred["username"] and password == cred["password"]:
             st.session_state.logged_in = True
             st.session_state.role = key
             st.success(f"Logged in as {role}")
             st.rerun()
         else:
-            st.error("Invalid credentials.")
+            st.error("Invalid credentials. Please check your username and password.")
+
 
 # Main
 def main():
