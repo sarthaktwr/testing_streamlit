@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import pydeck as pdk
 import time
+import math
 
 # User Credentials
 USER_CREDENTIALS = {
@@ -30,15 +31,15 @@ def create_layers(ground, path, current_aircraft_pos):
     return [
         pdk.Layer(
             "PathLayer",
-            data=[{"coordinates": path}],
+            data=pd.DataFrame({"coordinates": [path]}),
             get_path="coordinates",
             get_color=[255, 0, 0],
             width_scale=20,
-            get_width=5
+            width_min_pixels=5
         ),
         pdk.Layer(
             "ScatterplotLayer",
-            data=[{"position": ground_pos}],
+            data=pd.DataFrame({"position": [ground_pos]}),
             get_position="position",
             get_color=[0, 255, 0],
             get_radius=500,
@@ -46,27 +47,21 @@ def create_layers(ground, path, current_aircraft_pos):
         ),
         pdk.Layer(
             "IconLayer",
-            data=[
-                {
-                    "position": current_aircraft_pos,
-                    "icon_data": AIRCRAFT_ICON_URL
-                },
-                {
-                    "position": ground_pos,
-                    "icon_data": BOMB_ICON_URL
-                }
-            ],
-            get_icon="icon_data",
-            get_size=4,
-            size_scale=15,
-            get_position="position",
+            data=pd.DataFrame([
+                {"coordinates": current_aircraft_pos, "icon": AIRCRAFT_ICON_URL},
+                {"coordinates": ground_pos, "icon": BOMB_ICON_URL}
+            ]),
+            get_icon="icon",
+            get_size=100,
+            size_scale=1,
+            get_position="coordinates",
             pickable=True
         )
     ]
 
 def send_priority(unit, message):
     st.session_state.fwg_messages[unit.lower()] = message
-    st.toast(f"FWG message broadcast to {unit}: {message}")
+    st.toast(f"PRIORITY message sent to {unit}: {message}")
 
 # Dashboards
 def command_center_dashboard():
@@ -92,7 +87,6 @@ def command_center_dashboard():
             st.error("CSV missing required columns.")
             return
 
-        df['path'] = df[['longitude_wgs84(deg)', 'latitude_wgs84(deg)']].values.tolist()
         view = pdk.ViewState(
             latitude=ground[0],
             longitude=ground[1],
@@ -128,8 +122,9 @@ def command_center_dashboard():
                         send_priority("gun", "Continue Firing")
                         send_priority("aircraft", "Danger Area Reroute immediately")
                     st.session_state.priority_sent = True
+                    time.sleep(1)
                     st.rerun()
-            time.sleep(0.1)
+            time.sleep(0.5)
 
 def unit_dashboard(unit_name):
     st.title(f"🎯 {unit_name.upper()} DASHBOARD")
@@ -145,10 +140,6 @@ def unit_dashboard(unit_name):
             st.rerun()
     else:
         st.success("✅ No active messages.")
-    
-    # Keep the command center running in the background
-    if st.session_state.role == "command":
-        st.experimental_rerun()
 
 # Login
 def login():
@@ -169,7 +160,7 @@ def login():
             st.session_state.priority_sent = st.session_state.get('priority_sent', False)
             st.success(f"Logged in as {role}")
             time.sleep(1)
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("Invalid credentials.")
 
@@ -192,7 +183,7 @@ def main():
         if st.sidebar.button("Logout"):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
-            st.experimental_rerun()
+            st.rerun()
 
         if role == "command":
             command_center_dashboard()
@@ -202,5 +193,4 @@ def main():
             unit_dashboard("aircraft")
 
 if __name__ == "__main__":
-    import math  # Added for distance calculation
     main()
