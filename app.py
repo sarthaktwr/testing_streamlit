@@ -110,9 +110,14 @@ def login():
     password = st.text_input("Password", type="password")
     
     if st.button("Login"):
-        # Convert role to lowercase and remove spaces to match keys in USER_CREDENTIALS
-        role_key = role.lower().replace(" ", "")
-        
+        # Convert role to lowercase, remove spaces, and match it with the keys in USER_CREDENTIALS
+        role_key_map = {
+            "Command Center": "command",
+            "Ground Unit": "ground",
+            "Aircraft": "aircraft"
+        }
+        role_key = role_key_map.get(role, None)
+
         # Debugging: print the exact role key and credentials
         st.write(f"Checking credentials for role: {role}")
         st.write(f"Role key: {role_key}")  # This is the key being used to access USER_CREDENTIALS
@@ -137,6 +142,7 @@ def login():
             st.rerun()
         else:
             st.error("Invalid credentials. Please check your username and password.")
+
 
 
 
