@@ -2,40 +2,6 @@ import streamlit as st
 import pandas as pd
 import pydeck as pdk
 import time
-import asyncio
-import threading
-import websockets
-
-# WebSocket Client Class
-class WSClient:
-    def __init__(self, url):
-        self.url = url
-        self.message_callback = None
-        self.connected = False
-        self.websocket = None
-
-    async def connect(self):
-        async with websockets.connect(self.url) as websocket:
-            self.connected = True
-            self.websocket = websocket
-            while True:
-                message = await websocket.recv()
-                if self.message_callback:
-                    self.message_callback(message)
-
-    def start(self):
-        def run_loop():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.connect())
-        threading.Thread(target=run_loop, daemon=True).start()
-
-    async def send(self, message):
-        if self.connected and self.websocket:
-            await self.websocket.send(message)
-
-    def on_message(self, callback):
-        self.message_callback = callback
 
 # User Credentials
 USER_CREDENTIALS = {
@@ -66,14 +32,7 @@ def create_layers(ground, path, current_aircraft_pos):
     ]
 
 def send_priority(unit, message):
-    full_msg = f"{unit}:{message}"
-
-    # Use async function to send the message
-    async def async_send():
-        await st.session_state.ws_client.send(full_msg)
-    asyncio.create_task(async_send())
-    
-    st.toast(f"FWG message broadcast: {message}")
+    st.toast(f"FWG message broadcast to {unit}: {message}")
 
 # Dashboards
 def command_center_dashboard():
@@ -168,19 +127,6 @@ def main():
         st.session_state.fwg_messages = {}
     if 'priority_sent' not in st.session_state:
         st.session_state.priority_sent = False
-    if 'ws_client' not in st.session_state:
-        ws = WSClient("ws://localhost:8000/ws")
-
-        def handle_msg(msg):
-            parts = msg.split(":")
-            if len(parts) == 2:
-                st.session_state.fwg_messages[parts[0]] = parts[1]
-                st.session_state.priority_sent = False
-                st.experimental_rerun()
-
-        ws.on_message(handle_msg)
-        ws.start()
-        st.session_state.ws_client = ws
 
     if not st.session_state.logged_in:
         login()
