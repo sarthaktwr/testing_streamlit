@@ -113,13 +113,21 @@ def login():
         # Convert role to lowercase and remove spaces to match keys in USER_CREDENTIALS
         role_key = role.lower().replace(" ", "")
         
+        # Debugging: print the exact role key and credentials
+        st.write(f"Checking credentials for role: {role}")
+        st.write(f"Role key: {role_key}")  # This is the key being used to access USER_CREDENTIALS
+        
         # Fetch the credentials for the selected role
         cred = USER_CREDENTIALS.get(role_key)
         
-        # Debugging: print credentials and inputs for troubleshooting
-        st.write(f"Checking credentials for role: {role}")
-        st.write(f"Entered Username: {username}")
-        st.write(f"Stored Username: {cred['username'] if cred else 'N/A'}")
+        # More debugging: print the contents of USER_CREDENTIALS
+        st.write(f"USER_CREDENTIALS: {USER_CREDENTIALS}")
+        
+        # Check if the credentials exist
+        if cred:
+            st.write(f"Stored Username: {cred['username']}")
+        else:
+            st.write(f"No credentials found for role '{role_key}'")
         
         # Validate login
         if cred and username == cred["username"] and password == cred["password"]:
