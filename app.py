@@ -120,7 +120,7 @@ if st.session_state['user_role'] is None:
     if st.button('Login'):
         login_success = login_user(username, password)
         if login_success:
-            st.experimental_rerun()  # Rerun the app to reflect the new user role
+            st.rerun()  # Rerun the app to reflect the new user role
 
 # App functionality based on user role
 else:
