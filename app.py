@@ -108,8 +108,9 @@ def login_user(username, password):
         if credentials['username'] == username and credentials['password'] == password:
             st.session_state['user_role'] = role
             st.success(f'Logged in as {role}')
-            return
+            return True  # Return True on successful login
     st.error('Incorrect username or password')
+    return False  # Return False on failed login
 
 # Login form
 if st.session_state['user_role'] is None:
@@ -117,7 +118,9 @@ if st.session_state['user_role'] is None:
     username = st.text_input('Username')
     password = st.text_input('Password', type='password')
     if st.button('Login'):
-        login_user(username, password)
+        login_success = login_user(username, password)
+        if login_success:
+            st.experimental_rerun()  # Rerun the app to reflect the new user role
 
 # App functionality based on user role
 else:
