@@ -103,6 +103,7 @@ def login_user(username, password):
     """
     for role, credentials in USER_ROLES.items():
         if credentials['username'] == username and credentials['password'] == password:
+            print('----------------------------- logged in') 
             st.session_state['role'] = role
             st.session_state['logged_in'] = True
             st.success(f'Logged in as {role}')
