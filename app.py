@@ -284,7 +284,7 @@ else:
                     r = pdk.Deck(
                         layers=[path_layer, scatter_layer, icon_layer],
                         initial_view_state=view_state,
-                        map_style="mapbox://styles/mapbox/light-v9",
+                        map_style='mapbox://styles/mapbox/satellite-streets-v11',
                     )
 
                     # Render the updated map in the same placeholder
