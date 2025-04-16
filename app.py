@@ -10,36 +10,30 @@ import json
 
 # Constants
 PROXIMITY_THRESHOLD = 4500  # in meters
-# Simulated user roles and credentials
-USER_ROLES = {
-    'command_center': {'username': 'command', 'password': 'center123'},
-    'ground_unit': {'username': 'ground', 'password': 'unit123'},
-    'aircraft': {'username': 'aircraft', 'password': 'flight123'}
+# User Credentials
+USER_CREDENTIALS = {
+    "command": {"username": "command", "password": "center123"},
+    "ground": {"username": "ground", "password": "unit123"},
+    "aircraft": {"username": "aircraft", "password": "flight123"},
 }
-scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-google_credentials = json.loads(st.secrets['google_credentials']['value'])
-creds = Credentials.from_service_account_info(google_credentials, scopes=scope)
-client = gspread.authorize(creds)
 
-# Initialize session state
-if 'user_role' not in st.session_state:
-    st.session_state['user_role'] = None
-if 'alert_sent' not in st.session_state:
-    st.session_state['alert_sent'] = False
+# Initialize all session state variables
+def init_session_state():
+    required_states = {
+        'logged_in': False,
+        'role': None,
+        'alert_sent_ground': False,
+        'alert_sent_aircraft': False,
+        'ground_position': (28.6139, 77.2090, 0.0),
+        'alert_log': [],
+        'unit_logs': {"ground": [], "aircraft": []}  # Separate logs for each unit
+    }
 
-def send_alert_to_unit(unit_type, sheet):
-    """
-    Sends an alert to a specific unit type.
-    Args:
-    unit_type (str): The type of unit to send the alert to.
-    Returns:
-    None
-    """
-    current_time = datetime.utcnow().isoformat()
-    sheet.append_row([current_time, 'True', unit_type])
-    st.session_state['alert_sent'] = True
-    st.write(f"Alert sent to {unit_type}!")
+    for key, value in required_states.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
+# Helper Functions
 def calculate_3d_distance(loc1, loc2):
     """
     Calculates the 3D distance between two locations.
@@ -54,17 +48,18 @@ def calculate_3d_distance(loc1, loc2):
     distance_3d = math.sqrt(surface_distance**2 + elevation_difference**2)
     return distance_3d
 
-def check_aircraft_proximity(ground_unit_location, aircraft_location):
+def send_alert_to_unit(unit_type, sheet):
     """
-    Checks if an aircraft is within a certain proximity to a ground unit.
+    Sends an alert to a specific unit type.
     Args:
-    ground_unit_location (tuple): The 3D coordinates of the ground unit.
-    aircraft_location (tuple): The 3D coordinates of the aircraft.
+    unit_type (str): The type of unit to send the alert to.
     Returns:
-    bool: True if the aircraft is within the proximity threshold, False otherwise.
+    None
     """
-    distance_to_aircraft = calculate_3d_distance(ground_unit_location, aircraft_location)
-    return distance_to_aircraft <= PROXIMITY_THRESHOLD
+    current_time = datetime.utcnow().isoformat()
+    sheet.append_row([current_time, 'True', unit_type])
+    st.session_state['alert_sent'] = True
+    st.write(f"Alert sent to {unit_type}!")
 
 def create_alerts_sheet():
     """
@@ -101,150 +96,151 @@ def login_user(username, password):
     Returns:
     None
     """
-    for role, credentials in USER_ROLES.items():
+    for role, credentials in USER_CREDENTIALS.items():
         if credentials['username'] == username and credentials['password'] == password:
-            st.session_state['user_role'] = role
+            st.session_state['role'] = role
+            st.session_state['logged_in'] = True
             st.success(f'Logged in as {role}')
             st.experimental_rerun()  # Rerun the app to reflect the new user role
             return
     st.error('Incorrect username or password')
 
 # Login form
-if st.session_state['user_role'] is None:
-    st.subheader('Login')
-    username = st.text_input('Username')
-    password = st.text_input('Password', type='password')
-    if st.button('Login'):
+def login():
+    st.title("🔐 Secure Login")
+    role = st.selectbox("Login As", ["Command Center", "Ground Unit", "Aircraft"])
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
         login_user(username, password)
 
-# App functionality based on user role
-else:
-    if st.session_state['user_role'] == 'command_center':
-        # Command center interface
-        st.title('Command Center Dashboard')
-        st.title('Aircraft Proximity Alert System')
-        try:
-            sheet = client.open('Aircraft Proximity Alert System').sheet1
-        except gspread.SpreadsheetNotFound:
-            sheet = create_alerts_sheet()
+# Command Center Dashboard
+def command_center_dashboard():
+    st.title('Command Center Dashboard')
+    st.title('Aircraft Proximity Alert System')
+    try:
+        sheet = client.open('Aircraft Proximity Alert System').sheet1
+    except gspread.SpreadsheetNotFound:
+        sheet = create_alerts_sheet()
 
-        # Input fields for the ground unit location
-        st.subheader('Ground Unit Location')
-        ground_lat = st.number_input('Latitude (deg)', value=0.0, format='%f')
-        ground_lon = st.number_input('Longitude (deg)', value=0.0, format='%f')
-        ground_elev = st.number_input('Elevation (meters)', value=0.0, format='%f')
-        ground_unit_location = (ground_lat, ground_lon, ground_elev)
+    # Input fields for the ground unit location
+    st.subheader('Ground Unit Location')
+    ground_lat = st.number_input('Latitude (deg)', value=0.0, format='%f')
+    ground_lon = st.number_input('Longitude (deg)', value=0.0, format='%f')
+    ground_elev = st.number_input('Elevation (meters)', value=0.0, format='%f')
+    ground_unit_location = (ground_lat, ground_lon, ground_elev)
 
-        # File uploader for the aircraft location CSV
-        st.subheader('Upload Aircraft Location CSV')
-        csv_file = st.file_uploader("Choose a CSV file", type="csv")
+    # File uploader for the aircraft location CSV
+    st.subheader('Upload Aircraft Location CSV')
+    csv_file = st.file_uploader("Choose a CSV file", type="csv")
 
-        if csv_file is not None:
-            # Reset alert states when a new CSV file is uploaded
-            st.session_state['alert_sent_ground'] = False
-            st.session_state['alert_sent_aircraft'] = False
+    if csv_file is not None:
+        # Reset alert states when a new CSV file is uploaded
+        st.session_state['alert_sent_ground'] = False
+        st.session_state['alert_sent_aircraft'] = False
 
-            # Read the CSV file into a DataFrame
-            df = pd.read_csv(csv_file)
+        # Read the CSV file into a DataFrame
+        df = pd.read_csv(csv_file)
 
-            # Ensure the required columns are present
-            required_columns = ['latitude_wgs84(deg)', 'longitude_wgs84(deg)', 'elevation_wgs84(m)']
-            if all(col in df.columns for col in required_columns):
-                # Create a new column for the path to match PyDeck's input format
-                df['path'] = df[['longitude_wgs84(deg)', 'latitude_wgs84(deg)']].values.tolist()
+        # Ensure the required columns are present
+        required_columns = ['latitude_wgs84(deg)', 'longitude_wgs84(deg)', 'elevation_wgs84(m)']
+        if all(col in df.columns for col in required_columns):
+            # Create a new column for the path to match PyDeck's input format
+            df['path'] = df[['longitude_wgs84(deg)', 'latitude_wgs84(deg)']].values.tolist()
 
-                # Define the initial view state of the map
-                view_state = pdk.ViewState(
-                    latitude=df['latitude_wgs84(deg)'].mean(),
-                    longitude=df['longitude_wgs84(deg)'].mean(),
-                    zoom=11,
-                    pitch=50,
-                )
+            # Define the initial view state of the map
+            view_state = pdk.ViewState(
+                latitude=df['latitude_wgs84(deg)'].mean(),
+                longitude=df['longitude_wgs84(deg)'].mean(),
+                zoom=11,
+                pitch=50,
+            )
 
-                # Create a placeholder for the map
-                map_placeholder = st.empty()
+            # Create a placeholder for the map
+            map_placeholder = st.empty()
 
-                # Create a DataFrame for the ground unit
-                ground_unit_df = pd.DataFrame({
-                    'latitude': [ground_unit_location[0]],
-                    'longitude': [ground_unit_location[1]],
-                    'elevation': [ground_unit_location[2]],
-                })
+            # Create a DataFrame for the ground unit
+            ground_unit_df = pd.DataFrame({
+                'latitude': [ground_unit_location[0]],
+                'longitude': [ground_unit_location[1]],
+                'elevation': [ground_unit_location[2]],
+            })
 
-                # Icon layer for the square point
-                icon_data = pd.DataFrame({
-                    'coordinates': [[ground_unit_location[1], ground_unit_location[0]]],
-                })
+            # Icon layer for the square point
+            icon_data = pd.DataFrame({
+                'coordinates': [[ground_unit_location[1], ground_unit_location[0]]],
+            })
 
-                # Create the path layer for the aircraft's movement
-                path_layer = pdk.Layer(
-                    "PathLayer",
-                    data=df,
-                    get_path="path",
-                    get_color=[255, 0, 0, 150],  # Red color for the path
-                    width_scale=20,
-                    width_min_pixels=2,
-                    get_width=5,
-                )
+            # Create the path layer for the aircraft's movement
+            path_layer = pdk.Layer(
+                "PathLayer",
+                data=df,
+                get_path="path",
+                get_color=[255, 0, 0, 150],  # Red color for the path
+                width_scale=20,
+                width_min_pixels=2,
+                get_width=5,
+            )
 
-                # Create the scatterplot layer for the ground unit's circle
-                scatter_layer = pdk.Layer(
-                    "ScatterplotLayer",
-                    data=ground_unit_df,
-                    get_position=["longitude", "latitude"],
-                    get_fill_color=[0, 0, 255, 50],  # Light blue color for the circle
-                    get_radius=2500,  # 2.5km radius
-                    pickable=True,
-                )
+            # Create the scatterplot layer for the ground unit's circle
+            scatter_layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=ground_unit_df,
+                get_position=["longitude", "latitude"],
+                get_fill_color=[0, 0, 255, 50],  # Light blue color for the circle
+                get_radius=2500,  # 2.5km radius
+                pickable=True,
+            )
 
-                # Create the icon layer for the ground unit's square point
-                icon_layer = pdk.Layer(
-                    "IconLayer",
-                    data=icon_data,
-                    get_icon={
-                        "url": "https://img.icons8.com/windows/32/000000/square-full.png",  # URL for a square icon
-                        "width": 128,
-                        "height": 128,
-                        "anchorY": 128,
-                    },
-                    get_position="coordinates",
-                    get_size=10,  # Size of the square
-                    size_scale=10,
-                    pickable=True,
-                )
+            # Create the icon layer for the ground unit's square point
+            icon_layer = pdk.Layer(
+                "IconLayer",
+                data=icon_data,
+                get_icon={
+                    "url": "https://img.icons8.com/windows/32/000000/square-full.png",  # URL for a square icon
+                    "width": 128,
+                    "height": 128,
+                    "anchorY": 128,
+                },
+                get_position="coordinates",
+                get_size=10,  # Size of the square
+                size_scale=10,
+                pickable=True,
+            )
 
-                # Create the deck.gl map with all layers
-                r = pdk.Deck(
-                    layers=[path_layer, scatter_layer, icon_layer],
-                    initial_view_state=view_state,
-                    map_style="mapbox://styles/mapbox/light-v9",
-                )
+            # Create the deck.gl map with all layers
+            r = pdk.Deck(
+                layers=[path_layer, scatter_layer, icon_layer],
+                initial_view_state=view_state,
+                map_style="mapbox://styles/mapbox/light-v9",
+            )
 
-                # Render the updated map in the same placeholder
-                map_placeholder.pydeck_chart(r)
+            # Render the updated map in the same placeholder
+            map_placeholder.pydeck_chart(r)
 
-                # Display buttons for sending alerts
-                aircraft_options = df[['latitude_wgs84(deg)', 'longitude_wgs84(deg)']].values.tolist()
-                selected_aircraft = st.selectbox("Select Aircraft Position", aircraft_options)
+            # Display buttons for sending alerts
+            aircraft_options = df[['latitude_wgs84(deg)', 'longitude_wgs84(deg)']].values.tolist()
+            selected_aircraft = st.selectbox("Select Aircraft Position", aircraft_options)
 
-                if st.button("Send Alert to Ground Unit"):
-                    aircraft_location = (selected_aircraft[0], selected_aircraft[1], 0)  # Assuming elevation is 0 for simplicity
-                    distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
-                    if distance_to_ground <= PROXIMITY_THRESHOLD:
-                        send_alert_to_unit('ground_unit', sheet)
-                    else:
-                        st.warning("Aircraft is out of range for ground unit.")
+            if st.button("Send Alert to Ground Unit"):
+                aircraft_location = (selected_aircraft[0], selected_aircraft[1], 0)  # Assuming elevation is 0 for simplicity
+                distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
+                if distance_to_ground <= PROXIMITY_THRESHOLD:
+                    send_alert_to_unit('ground_unit', sheet)
+                else:
+                    st.warning("Aircraft is out of range for ground unit.")
 
-                if st.button("Send Alert to Aircraft"):
-                    aircraft_location = (selected_aircraft[0], selected_aircraft[1], 0)  # Assuming elevation is 0 for simplicity
-                    distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
-                    if distance_to_ground <= PROXIMITY_THRESHOLD:
-                        send_alert_to_unit('aircraft', sheet)
-                    else:
-                        st.warning("Aircraft is out of range for aircraft alert.")
+            if st.button("Send Alert to Aircraft"):
+                aircraft_location = (selected_aircraft[0], selected_aircraft[1], 0)  # Assuming elevation is 0 for simplicity
+                distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
+                if distance_to_ground <= PROXIMITY_THRESHOLD:
+                    send_alert_to_unit('aircraft', sheet)
+                else:
+                    st.warning("Aircraft is out of range for aircraft alert.")
 
-            else:
-                st.error('CSV file must contain latitude, longitude, and elevation columns.')
+        else:
+            st.error('CSV file must contain latitude, longitude, and elevation columns.')
 
     elif st.session_state['role'] == 'ground':
         # Ground unit interface
