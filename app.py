@@ -9,15 +9,14 @@ from datetime import datetime
 from google.oauth2.service_account import Credentials
 import json
 
-# Constants
-PROXIMITY_THRESHOLD = 4500  # in meters
+# Constants and setup (same as before)
+PROXIMITY_THRESHOLD = 4500
 USER_ROLES = {
     'command_center': {'username': 'command', 'password': 'center123'},
     'ground_unit': {'username': 'ground', 'password': 'unit123'},
     'aircraft': {'username': 'aircraft', 'password': 'flight123'}
 }
 
-# Initialize Google Sheets connection
 @st.cache_resource
 def init_gsheet():
     scope = ['https://spreadsheets.google.com/feeds', 
@@ -43,10 +42,14 @@ if 'sheet' not in st.session_state:
     st.session_state.sheet = init_gsheet()
 if 'alert_sent' not in st.session_state:
     st.session_state.alert_sent = False
-if 'last_alert_check' not in st.session_state:
-    st.session_state.last_alert_check = datetime.min
+if 'animation_frame' not in st.session_state:
+    st.session_state.animation_frame = 0
+if 'animation_running' not in st.session_state:
+    st.session_state.animation_running = False
+if 'df' not in st.session_state:
+    st.session_state.df = None
 
-# Utility functions
+# Utility functions (same as before)
 def calculate_3d_distance(loc1, loc2):
     surface_distance = geodesic((loc1[0], loc1[1]), (loc2[0], loc2[1])).meters
     elevation_difference = abs(loc1[2] - loc2[2])
@@ -74,7 +77,6 @@ def check_for_alerts():
         st.error(f"Error checking alerts: {str(e)}")
     return None
 
-# Login system
 def login_user(username, password):
     for role, creds in USER_ROLES.items():
         if creds['username'] == username and creds['password'] == password:
@@ -84,23 +86,26 @@ def login_user(username, password):
     st.error('Incorrect username or password')
     return False
 
-# Main app logic
+def update_animation():
+    if st.session_state.animation_running and st.session_state.df is not None:
+        if st.session_state.animation_frame < len(st.session_state.df):
+            st.session_state.animation_frame += 1
+            time.sleep(0.3)  # Control animation speed
+            st.rerun()
+
 def main():
-    # Login form
     if st.session_state.user_role is None:
         st.subheader('Login')
         username = st.text_input('Username')
         password = st.text_input('Password', type='password')
         if st.button('Login'):
             login_user(username, password)
-            st.rerun()
         return
     
-    # Command Center Interface
     if st.session_state.user_role == 'command_center':
         st.title('Command Center Dashboard')
         
-        # Ground unit location input
+        # Ground unit location
         st.subheader('Ground Unit Location')
         ground_lat = st.number_input('Latitude (deg)', value=0.0)
         ground_lon = st.number_input('Longitude (deg)', value=0.0)
@@ -109,105 +114,115 @@ def main():
         
         # Aircraft data upload
         st.subheader('Aircraft Path Data')
-        csv_file = st.file_uploader("Upload CSV", type="csv")
+        csv_file = st.file_uploader("Upload CSV", type="csv", key="csv_uploader")
         
         if csv_file:
-            df = pd.read_csv(csv_file)
-            required_cols = ['latitude_wgs84(deg)', 'longitude_wgs84(deg)', 'elevation_wgs84(m)']
+            if st.session_state.df is None:
+                st.session_state.df = pd.read_csv(csv_file)
+                required_cols = ['latitude_wgs84(deg)', 'longitude_wgs84(deg)', 'elevation_wgs84(m)']
+                
+                if not all(col in st.session_state.df.columns for col in required_cols):
+                    st.error("CSV missing required columns")
+                    return
+                
+                st.session_state.animation_frame = 0
+                st.session_state.animation_running = True
             
-            if all(col in df.columns for col in required_cols):
-                # Initialize map
+            # Start/stop animation controls
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Start Animation"):
+                    st.session_state.animation_running = True
+            with col2:
+                if st.button("Stop Animation"):
+                    st.session_state.animation_running = False
+            
+            # Display current frame
+            current_frame = st.session_state.animation_frame
+            st.write(f"Frame: {current_frame}/{len(st.session_state.df)}")
+            
+            # Get current aircraft position
+            if current_frame < len(st.session_state.df):
+                aircraft_loc = (
+                    st.session_state.df.iloc[current_frame]['latitude_wgs84(deg)'],
+                    st.session_state.df.iloc[current_frame]['longitude_wgs84(deg)'],
+                    st.session_state.df.iloc[current_frame]['elevation_wgs84(m)']
+                )
+                
+                # Check proximity
+                if check_aircraft_proximity(ground_loc, aircraft_loc):
+                    st.warning("Aircraft in proximity!")
+                    col1, col2 = st.columns(2)
+                    
+                    if col1.button("Alert Ground Unit", key="ground_alert"):
+                        if send_alert('ground_unit'):
+                            st.success("Alert sent to Ground Unit!")
+                    
+                    if col2.button("Alert Aircraft", key="aircraft_alert"):
+                        if send_alert('aircraft'):
+                            st.success("Alert sent to Aircraft!")
+                
+                # Display map
                 view_state = pdk.ViewState(
-                    latitude=df['latitude_wgs84(deg)'].mean(),
-                    longitude=df['longitude_wgs84(deg)'].mean(),
+                    latitude=st.session_state.df['latitude_wgs84(deg)'].mean(),
+                    longitude=st.session_state.df['longitude_wgs84(deg)'].mean(),
                     zoom=11,
                     pitch=50
                 )
                 
-                map_placeholder = st.empty()
-                alert_placeholder = st.empty()
+                path_layer = pdk.Layer(
+                    "PathLayer",
+                    data=pd.DataFrame({
+                        'path': [st.session_state.df.iloc[:current_frame+1][
+                            ['longitude_wgs84(deg)', 'latitude_wgs84(deg)']
+                        ].values.tolist()]
+                    }),
+                    get_path="path",
+                    get_color=[255, 0, 0],
+                    width_scale=20,
+                    width_min_pixels=2
+                )
                 
-                # Process each point in the flight path
-                for i in range(len(df)):
-                    aircraft_loc = (
-                        df.iloc[i]['latitude_wgs84(deg)'],
-                        df.iloc[i]['longitude_wgs84(deg)'],
-                        df.iloc[i]['elevation_wgs84(m)']
-                    )
-                    
-                    # Check proximity
-                    if check_aircraft_proximity(ground_loc, aircraft_loc):
-                        with alert_placeholder.container():
-                            st.warning("Aircraft in proximity!")
-                            col1, col2 = st.columns(2)
-                            
-                            # Use unique keys for buttons
-                            if col1.button("Alert Ground Unit", key=f"ground_alert_{i}"):
-                                if send_alert('ground_unit'):
-                                    st.success("Alert sent to Ground Unit!")
-                            
-                            if col2.button("Alert Aircraft", key=f"aircraft_alert_{i}"):
-                                if send_alert('aircraft'):
-                                    st.success("Alert sent to Aircraft!")
-                    
-                    # Update map display
-                    path_layer = pdk.Layer(
-                        "PathLayer",
-                        data=pd.DataFrame({'path': [df.iloc[:i+1][['longitude_wgs84(deg)', 'latitude_wgs84(deg)']].values.tolist()]}),
-                        get_path="path",
-                        get_color=[255, 0, 0],
-                        width_scale=20,
-                        width_min_pixels=2
-                    )
-                    
-                    deck = pdk.Deck(
-                        layers=[path_layer],
-                        initial_view_state=view_state,
-                        map_style="mapbox://styles/mapbox/light-v9"
-                    )
-                    
-                    map_placeholder.pydeck_chart(deck)
-                    time.sleep(0.1)
+                st.pydeck_chart(pdk.Deck(
+                    layers=[path_layer],
+                    initial_view_state=view_state,
+                    map_style="mapbox://styles/mapbox/light-v9"
+                ))
+            
+            # Continue animation if running
+            if st.session_state.animation_running:
+                update_animation()
     
-    # Ground Unit Interface
     elif st.session_state.user_role == 'ground_unit':
         st.title('Ground Unit Dashboard')
+        alert = check_for_alerts()
         
-        # Check for alerts every 5 seconds
-        if time.time() - st.session_state.last_alert_check > 5:
-            alert = check_for_alerts()
-            st.session_state.last_alert_check = time.time()
-            
-            if alert:
-                if alert['Unit Type'] == 'ground_unit':
-                    st.error("ALERT: Continue Firing")
-                else:
-                    st.error("ALERT: Stop Firing - Friendly Aircraft")
+        if alert:
+            if alert['Unit Type'] == 'ground_unit':
+                st.error("ALERT: Continue Firing")
             else:
-                st.success("No active alerts")
+                st.error("ALERT: Stop Firing - Friendly Aircraft")
+        else:
+            st.success("No active alerts")
         
-        st.button("Refresh Alerts")
+        if st.button("Refresh"):
+            st.rerun()
     
-    # Aircraft Interface
     elif st.session_state.user_role == 'aircraft':
         st.title('Aircraft Dashboard')
+        alert = check_for_alerts()
         
-        # Check for alerts every 5 seconds
-        if time.time() - st.session_state.last_alert_check > 5:
-            alert = check_for_alerts()
-            st.session_state.last_alert_check = time.time()
-            
-            if alert:
-                if alert['Unit Type'] == 'ground_unit':
-                    st.error("ALERT: Ground Unit Firing - Evasive Action")
-                else:
-                    st.error("ALERT: Flight Path Cleared")
+        if alert:
+            if alert['Unit Type'] == 'ground_unit':
+                st.error("ALERT: Ground Unit Firing - Evasive Action")
             else:
-                st.success("No active alerts")
+                st.error("ALERT: Flight Path Cleared")
+        else:
+            st.success("No active alerts")
         
-        st.button("Refresh Alerts")
+        if st.button("Refresh"):
+            st.rerun()
     
-    # Logout button
     if st.button('Logout'):
         st.session_state.clear()
         st.rerun()
