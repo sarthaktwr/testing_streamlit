@@ -105,6 +105,7 @@ def login_user(username, password):
         if credentials['username'] == username and credentials['password'] == password:
             st.session_state['user_role'] = role
             st.success(f'Logged in as {role}')
+            st.experimental_rerun()  # Rerun the app to reflect the new user role
             return
     st.error('Incorrect username or password')
 
@@ -139,6 +140,10 @@ else:
         csv_file = st.file_uploader("Choose a CSV file", type="csv")
 
         if csv_file is not None:
+            # Reset alert states when a new CSV file is uploaded
+            st.session_state['alert_sent_ground'] = False
+            st.session_state['alert_sent_aircraft'] = False
+
             # Read the CSV file into a DataFrame
             df = pd.read_csv(csv_file)
 
@@ -156,6 +161,9 @@ else:
                     pitch=50,
                 )
 
+                # Create a placeholder for the map
+                map_placeholder = st.empty()
+
                 # Create a DataFrame for the ground unit
                 ground_unit_df = pd.DataFrame({
                     'latitude': [ground_unit_location[0]],
@@ -163,18 +171,23 @@ else:
                     'elevation': [ground_unit_location[2]],
                 })
 
-                # Create the deck.gl map with all layers
+                # Icon layer for the square point
+                icon_data = pd.DataFrame({
+                    'coordinates': [[ground_unit_location[1], ground_unit_location[0]]],
+                })
+
+                # Create the path layer for the aircraft's movement
                 path_layer = pdk.Layer(
                     "PathLayer",
-                    data=pd.DataFrame({'path': [df['path'].tolist()]}),
-                    pickable=True,
+                    data=df,
+                    get_path="path",
                     get_color=[255, 0, 0, 150],  # Red color for the path
                     width_scale=20,
                     width_min_pixels=2,
-                    get_path="path",
                     get_width=5,
                 )
 
+                # Create the scatterplot layer for the ground unit's circle
                 scatter_layer = pdk.Layer(
                     "ScatterplotLayer",
                     data=ground_unit_df,
@@ -184,59 +197,95 @@ else:
                     pickable=True,
                 )
 
+                # Create the icon layer for the ground unit's square point
+                icon_layer = pdk.Layer(
+                    "IconLayer",
+                    data=icon_data,
+                    get_icon={
+                        "url": "https://img.icons8.com/windows/32/000000/square-full.png",  # URL for a square icon
+                        "width": 128,
+                        "height": 128,
+                        "anchorY": 128,
+                    },
+                    get_position="coordinates",
+                    get_size=10,  # Size of the square
+                    size_scale=10,
+                    pickable=True,
+                )
+
+                # Create the deck.gl map with all layers
                 r = pdk.Deck(
-                    layers=[path_layer, scatter_layer],
+                    layers=[path_layer, scatter_layer, icon_layer],
                     initial_view_state=view_state,
                     map_style="mapbox://styles/mapbox/light-v9",
                 )
 
-                # Render the updated map
-                st.pydeck_chart(r)
+                # Render the updated map in the same placeholder
+                map_placeholder.pydeck_chart(r)
 
-                # Calculate proximity for the current aircraft position
-                for index, row in df.iterrows():
-                    aircraft_location = (
-                        row['latitude_wgs84(deg)'],
-                        row['longitude_wgs84(deg)'],
-                        row['elevation_wgs84(m)']
-                    )
-                    alert = check_aircraft_proximity(ground_unit_location, aircraft_location)
+                # Display buttons for sending alerts
+                aircraft_options = df[['latitude_wgs84(deg)', 'longitude_wgs84(deg)']].values.tolist()
+                selected_aircraft = st.selectbox("Select Aircraft Position", aircraft_options)
+
+                if st.button("Send Alert to Ground Unit"):
+                    aircraft_location = (selected_aircraft[0], selected_aircraft[1], 0)  # Assuming elevation is 0 for simplicity
                     distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
+                    if distance_to_ground <= PROXIMITY_THRESHOLD:
+                        send_alert_to_unit('ground_unit', sheet)
+                    else:
+                        st.warning("Aircraft is out of range for ground unit.")
 
-                    # Add an alert if the aircraft is within 4.5 km
-                    if distance_to_ground <= 4500:
-                        st.write(f"Alert: Aircraft is within firing range. Distance: {distance_to_ground:.2f} meters.")
-
-                        # Send alert to ground unit
-                        if st.button(f"Send Alert to Ground Unit for Aircraft {index}"):
-                            send_alert_to_unit('ground_unit', sheet)
+                if st.button("Send Alert to Aircraft"):
+                    aircraft_location = (selected_aircraft[0], selected_aircraft[1], 0)  # Assuming elevation is 0 for simplicity
+                    distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
+                    if distance_to_ground <= PROXIMITY_THRESHOLD:
+                        send_alert_to_unit('aircraft', sheet)
+                    else:
+                        st.warning("Aircraft is out of range for aircraft alert.")
 
             else:
                 st.error('CSV file must contain latitude, longitude, and elevation columns.')
 
-    elif st.session_state['user_role'] == 'ground_unit':
+    elif st.session_state['role'] == 'ground':
         # Ground unit interface
         st.title('Ground Unit Dashboard')
         system_alerts = check_for_alerts()
-        if system_alerts:
+        if system_alerts is not None:
             if system_alerts['Unit Type'] == 'ground_unit':
                 st.error('Keep Firing.')
             else:
                 st.error('Friendly aircraft approaching. Stop Firing!')
 
-    elif st.session_state['user_role'] == 'aircraft':
+    elif st.session_state['role'] == 'aircraft':
         # Aircraft interface
         st.title('Aircraft Dashboard')
         system_alerts = check_for_alerts()
-        if system_alerts:
+        if system_alerts is not None:
             if system_alerts['Unit Type'] == 'ground_unit':
                 st.error('Ground Unit Firing. Reroute the current path.')
             else:
                 st.error('Clearance to fly.')
 
-    # Logout button
-    if st.session_state['user_role'] is not None:
-        if st.button('Logout'):
-            st.session_state['user_role'] = None
-            st.session_state['alert_sent'] = False
-            st.write("You have been logged out.")
+# Main
+def main():
+    init_session_state()
+
+    if not st.session_state.logged_in:
+        login()
+    else:
+        role = st.session_state.role
+        st.sidebar.success(f"Logged in as {role.upper()}")
+        if st.sidebar.button("Logout"):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+
+        if role == "command":
+            command_center_dashboard()
+        elif role == "ground":
+            unit_dashboard("ground")
+        elif role == "aircraft":
+            unit_dashboard("aircraft")
+
+if __name__ == "__main__":
+    main()
