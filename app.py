@@ -309,6 +309,7 @@ else:
 
                             with col1:
                                 if st.button("Priority to Ground Unit", key = f"ground_unit_{index}"):
+                                    st.write('button clicked')
                                     with alert_placeholder.container():
                                         unit_type = 'ground_unit'
                                         send_alert_to_unit(unit_type, sheet)
@@ -319,6 +320,7 @@ else:
 
                             with col2:
                                 if st.button("Priority to Aircraft", key = f"aircraft_{index}"):
+                                    st.write('button clicked')
                                     with alert_placeholder.container():
                                         unit_type = 'aircraft'
                                         send_alert_to_unit(unit_type, sheet)
