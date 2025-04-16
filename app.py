@@ -6,8 +6,6 @@ import pandas as pd
 import pydeck as pdk
 import gspread
 from datetime import datetime
-from shapely.geometry import Point, mapping
-import geopandas as gpd
 from google.oauth2.service_account import Credentials
 import json
 
@@ -59,18 +57,6 @@ def calculate_3d_distance(loc1, loc2):
     distance_3d = math.sqrt(surface_distance**2 + elevation_difference**2)
     return distance_3d
 
-def check_aircraft_proximity(ground_unit_location, aircraft_location):
-    """
-    Checks if an aircraft is within a certain proximity to a ground unit.
-    Args:
-    ground_unit_location (tuple): The 3D coordinates of the ground unit.
-    aircraft_location (tuple): The 3D coordinates of the aircraft.
-    Returns:
-    bool: True if the aircraft is within the proximity threshold, False otherwise.
-    """
-    distance_to_aircraft = calculate_3d_distance(ground_unit_location, aircraft_location)
-    return distance_to_aircraft <= PROXIMITY_THRESHOLD
-
 def create_alerts_sheet():
     """
     Creates a Google Sheet to store alerts.
@@ -108,8 +94,9 @@ def login_user(username, password):
         if credentials['username'] == username and credentials['password'] == password:
             st.session_state['user_role'] = role
             st.success(f'Logged in as {role}')
-            return
+            return True  # Return True on successful login
     st.error('Incorrect username or password')
+    return False  # Return False on failed login
 
 # Login form
 if st.session_state['user_role'] is None:
@@ -117,7 +104,9 @@ if st.session_state['user_role'] is None:
     username = st.text_input('Username')
     password = st.text_input('Password', type='password')
     if st.button('Login'):
-        login_user(username, password)
+        login_success = login_user(username, password)
+        if login_success:
+            st.rerun()  # Rerun the app to reflect the new user role
 
 # App functionality based on user role
 else:
@@ -164,9 +153,6 @@ else:
                     pitch=50,
                 )
 
-                # Initialize an empty list to accumulate paths for animation
-                animated_path = []
-
                 # Create a placeholder for the map
                 map_placeholder = st.empty()
 
@@ -186,76 +172,60 @@ else:
                 button_placeholder = st.empty()
                 alert_placeholder = st.empty()
 
-                # Loop through the rows of the DataFrame to animate the flight path
+                # Create the path layer for the aircraft's movement
+                path_layer = pdk.Layer(
+                    "PathLayer",
+                    data=df,
+                    get_path="path",
+                    get_color=[255, 0, 0, 150],  # Red color for the path
+                    width_scale=20,
+                    width_min_pixels=2,
+                    get_width=5,
+                )
+
+                # Create the scatterplot layer for the ground unit's circle
+                scatter_layer = pdk.Layer(
+                    "ScatterplotLayer",
+                    data=ground_unit_df,
+                    get_position=["longitude", "latitude"],
+                    get_fill_color=[0, 0, 255, 50],  # Light blue color for the circle
+                    get_radius=2500,  # 2.5km radius
+                    pickable=True,
+                )
+
+                # Create the icon layer for the ground unit's square point
+                icon_layer = pdk.Layer(
+                    "IconLayer",
+                    data=icon_data,
+                    get_icon={
+                        "url": "https://img.icons8.com/windows/32/000000/square-full.png",  # URL for a square icon
+                        "width": 128,
+                        "height": 128,
+                        "anchorY": 128,
+                    },
+                    get_position="coordinates",
+                    get_size=10,  # Size of the square
+                    size_scale=10,
+                    pickable=True,
+                )
+
+                # Create the deck.gl map with all layers
+                r = pdk.Deck(
+                    layers=[path_layer, scatter_layer, icon_layer],
+                    initial_view_state=view_state,
+                    map_style="mapbox://styles/mapbox/light-v9",
+                )
+
+                # Render the updated map in the same placeholder
+                map_placeholder.pydeck_chart(r)
+
+                # Display buttons dynamically
                 for index, row in df.iterrows():
-                    # Append the current point to the animated path
-                    animated_path.append(row['path'])
-
-                    # Create the path layer for the animated path
-                    path_layer = pdk.Layer(
-                        "PathLayer",
-                        data=pd.DataFrame({'path': [animated_path]}),  # Wrap in a DataFrame
-                        pickable=True,
-                        get_color=[255, 0, 0, 150],  # Red color for the path
-                        width_scale=20,
-                        width_min_pixels=2,
-                        get_path="path",
-                        get_width=5,
-                    )
-
-                    # Create the scatterplot layer for the ground unit's circle
-                    scatter_layer = pdk.Layer(
-                        "ScatterplotLayer",
-                        data=ground_unit_df,
-                        get_position=["longitude", "latitude"],
-                        get_fill_color=[0, 0, 255, 50],  # Light blue color for the circle
-                        get_radius=2500,  # 2.5km radius
-                        pickable=True,
-                    )
-
-                    # Create the icon layer for the ground unit's square point
-                    icon_layer = pdk.Layer(
-                        "IconLayer",
-                        data=icon_data,
-                        get_icon={
-                            "url": "https://img.icons8.com/windows/32/000000/square-full.png",  # URL for a square icon
-                            "width": 128,
-                            "height": 128,
-                            "anchorY": 128,
-                        },
-                        get_position="coordinates",
-                        get_size=10,  # Size of the square
-                        size_scale=10,
-                        pickable=True,
-                    )
-
-                    # Create the deck.gl map with all layers
-                    r = pdk.Deck(
-                        layers=[path_layer, scatter_layer, icon_layer],
-                        initial_view_state=view_state,
-                        map_style="mapbox://styles/mapbox/light-v9",
-                    )
-
-                    # Render the updated map in the same placeholder
-                    map_placeholder.pydeck_chart(r)
-
-                    # Calculate proximity for the current aircraft position
                     aircraft_location = (
                         row['latitude_wgs84(deg)'],
                         row['longitude_wgs84(deg)'],
                         row['elevation_wgs84(m)']
                     )
-                    distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
-
-                    # Add an alert if the aircraft is within 4.5 km
-                    if distance_to_ground <= 4500:
-                        if not st.session_state['alert_sent_ground']:
-                            st.session_state['alert_sent_ground'] = True
-                            send_alert_to_unit('ground_unit', sheet)
-
-                        if not st.session_state['alert_sent_aircraft']:
-                            st.session_state['alert_sent_aircraft'] = True
-                            send_alert_to_unit('aircraft', sheet)
 
                     # Display buttons dynamically
                     with button_placeholder.container():
@@ -263,18 +233,19 @@ else:
 
                         with col1:
                             if st.button("Priority to Ground Unit", key=f"ground_unit_{index}"):
-                                if not st.session_state['alert_sent_ground']:
+                                distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
+                                if distance_to_ground <= PROXIMITY_THRESHOLD:
                                     send_alert_to_unit('ground_unit', sheet)
-                                    st.session_state['alert_sent_ground'] = True
+                                else:
+                                    st.warning("Aircraft is out of range for ground unit.")
 
                         with col2:
                             if st.button("Priority to Aircraft", key=f"aircraft_{index}"):
-                                if not st.session_state['alert_sent_aircraft']:
+                                distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
+                                if distance_to_ground <= PROXIMITY_THRESHOLD:
                                     send_alert_to_unit('aircraft', sheet)
-                                    st.session_state['alert_sent_aircraft'] = True
-
-                    # Add a delay to create the animation effect
-                    time.sleep(0.1)
+                                else:
+                                    st.warning("Aircraft is out of range for aircraft alert.")
 
             else:
                 st.error('CSV file must contain latitude, longitude, and elevation columns.')
