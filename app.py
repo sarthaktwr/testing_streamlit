@@ -78,19 +78,19 @@ def check_for_alerts():
     return None
 
 def login_user(username, password):
-    for role, creds in USER_ROLES.items():
-        if creds['username'] == username and creds['password'] == password:
-            st.session_state.user_role = role
+    for role, credentials in USER_ROLES.items():
+        if credentials['username'] == username and credentials['password'] == password:
+            st.session_state['user_role'] = role
             st.success(f'Logged in as {role}')
-            return True
+            st.rerun()
+            return
     st.error('Incorrect username or password')
-    return False
 
 def update_animation():
     if st.session_state.animation_running and st.session_state.df is not None:
         if st.session_state.animation_frame < len(st.session_state.df):
             st.session_state.animation_frame += 1
-            time.sleep(0.3)  # Control animation speed
+            time.sleep(0.01)  # Control animation speed
             st.rerun()
 
 def main():
