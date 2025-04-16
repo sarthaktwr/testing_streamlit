@@ -17,6 +17,11 @@ USER_CREDENTIALS = {
     "aircraft": {"username": "aircraft", "password": "flight123"},
 }
 
+scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+google_credentials = json.loads(st.secrets['google_credentials']['value'])
+creds = Credentials.from_service_account_info(google_credentials, scopes = scope)
+client = gspread.authorize(creds)
+
 # Initialize all session state variables
 def init_session_state():
     required_states = {
