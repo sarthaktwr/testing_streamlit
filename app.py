@@ -6,8 +6,6 @@ import pandas as pd
 import pydeck as pdk
 import gspread
 from datetime import datetime
-from shapely.geometry import Point, mapping
-import geopandas as gpd
 from google.oauth2.service_account import Credentials
 import json
 
@@ -167,9 +165,6 @@ else:
                     pitch=50,
                 )
 
-                # Initialize an empty list to accumulate paths for animation
-                animated_path = []
-
                 # Create a placeholder for the map
                 map_placeholder = st.empty()
 
@@ -189,59 +184,55 @@ else:
                 button_placeholder = st.empty()
                 alert_placeholder = st.empty()
 
+                # Create the path layer for the aircraft's movement
+                path_layer = pdk.Layer(
+                    "PathLayer",
+                    data=df,
+                    get_path="path",
+                    get_color=[255, 0, 0, 150],  # Red color for the path
+                    width_scale=20,
+                    width_min_pixels=2,
+                    get_width=5,
+                )
+
+                # Create the scatterplot layer for the ground unit's circle
+                scatter_layer = pdk.Layer(
+                    "ScatterplotLayer",
+                    data=ground_unit_df,
+                    get_position=["longitude", "latitude"],
+                    get_fill_color=[0, 0, 255, 50],  # Light blue color for the circle
+                    get_radius=2500,  # 2.5km radius
+                    pickable=True,
+                )
+
+                # Create the icon layer for the ground unit's square point
+                icon_layer = pdk.Layer(
+                    "IconLayer",
+                    data=icon_data,
+                    get_icon={
+                        "url": "https://img.icons8.com/windows/32/000000/square-full.png",  # URL for a square icon
+                        "width": 128,
+                        "height": 128,
+                        "anchorY": 128,
+                    },
+                    get_position="coordinates",
+                    get_size=10,  # Size of the square
+                    size_scale=10,
+                    pickable=True,
+                )
+
+                # Create the deck.gl map with all layers
+                r = pdk.Deck(
+                    layers=[path_layer, scatter_layer, icon_layer],
+                    initial_view_state=view_state,
+                    map_style="mapbox://styles/mapbox/light-v9",
+                )
+
+                # Render the updated map in the same placeholder
+                map_placeholder.pydeck_chart(r)
+
                 # Loop through the rows of the DataFrame to animate the flight path
                 for index, row in df.iterrows():
-                    # Append the current point to the animated path
-                    animated_path.append(row['path'])
-
-                    # Create the path layer for the animated path
-                    path_layer = pdk.Layer(
-                        "PathLayer",
-                        data=pd.DataFrame({'path': [animated_path]}),  # Wrap in a DataFrame
-                        pickable=True,
-                        get_color=[255, 0, 0, 150],  # Red color for the path
-                        width_scale=20,
-                        width_min_pixels=2,
-                        get_path="path",
-                        get_width=5,
-                    )
-
-                    # Create the scatterplot layer for the ground unit's circle
-                    scatter_layer = pdk.Layer(
-                        "ScatterplotLayer",
-                        data=ground_unit_df,
-                        get_position=["longitude", "latitude"],
-                        get_fill_color=[0, 0, 255, 50],  # Light blue color for the circle
-                        get_radius=2500,  # 2.5km radius
-                        pickable=True,
-                    )
-
-                    # Create the icon layer for the ground unit's square point
-                    icon_layer = pdk.Layer(
-                        "IconLayer",
-                        data=icon_data,
-                        get_icon={
-                            "url": "https://img.icons8.com/windows/32/000000/square-full.png",  # URL for a square icon
-                            "width": 128,
-                            "height": 128,
-                            "anchorY": 128,
-                        },
-                        get_position="coordinates",
-                        get_size=10,  # Size of the square
-                        size_scale=10,
-                        pickable=True,
-                    )
-
-                    # Create the deck.gl map with all layers
-                    r = pdk.Deck(
-                        layers=[path_layer, scatter_layer, icon_layer],
-                        initial_view_state=view_state,
-                        map_style="mapbox://styles/mapbox/light-v9",
-                    )
-
-                    # Render the updated map in the same placeholder
-                    map_placeholder.pydeck_chart(r)
-
                     # Calculate proximity for the current aircraft position
                     aircraft_location = (
                         row['latitude_wgs84(deg)'],
