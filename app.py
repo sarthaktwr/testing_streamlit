@@ -101,7 +101,7 @@ def login_user(username, password):
             st.session_state['role'] = role
             st.session_state['logged_in'] = True
             st.success(f'Logged in as {role}')
-            st.experimental_rerun()  # Rerun the app to reflect the new user role
+            st.rerun()  # Rerun the app to reflect the new user role
             return
     st.error('Incorrect username or password')
 
