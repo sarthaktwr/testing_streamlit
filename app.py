@@ -1,7 +1,6 @@
 import streamlit as st
 from geopy.distance import geodesic
 import math
-import time
 import pandas as pd
 import pydeck as pdk
 import gspread
