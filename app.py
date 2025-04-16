@@ -329,6 +329,8 @@ else:
                                         # for alert in aircraft_alerts:
                                         #     st.write(alert)
 
+                    else:
+                        st.write("Aircraft is out of range")
                     # Add a delay to create the animation effect
                     time.sleep(0.1)
 
