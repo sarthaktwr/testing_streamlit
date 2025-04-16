@@ -17,11 +17,6 @@ USER_CREDENTIALS = {
     "aircraft": {"username": "aircraft", "password": "flight123"},
 }
 
-scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-google_credentials = json.loads(st.secrets['google_credentials']['value'])
-creds = Credentials.from_service_account_info(google_credentials, scopes=scope)
-client = gspread.authorize(creds)
-
 # Initialize all session state variables
 def init_session_state():
     required_states = {
@@ -104,7 +99,7 @@ def login_user(username, password):
             st.session_state['role'] = role
             st.session_state['logged_in'] = True
             st.success(f'Logged in as {role}')
-            st.rerun()  # Rerun the app to reflect the new user role
+            st.experimental_rerun()  # Rerun the app to reflect the new user role
             return
     st.error('Incorrect username or password')
 
@@ -223,32 +218,25 @@ def command_center_dashboard():
             # Render the updated map in the same placeholder
             map_placeholder.pydeck_chart(r)
 
-            # Display buttons dynamically
-            for index, row in df.iterrows():
-                aircraft_location = (
-                    row['latitude_wgs84(deg)'],
-                    row['longitude_wgs84(deg)'],
-                    row['elevation_wgs84(m)']
-                )
+            # Display buttons for sending alerts
+            aircraft_options = df[['latitude_wgs84(deg)', 'longitude_wgs84(deg)']].values.tolist()
+            selected_aircraft = st.selectbox("Select Aircraft Position", aircraft_options)
 
-                # Display buttons dynamically
-                col1, col2 = st.columns(2)
+            if st.button("Send Alert to Ground Unit"):
+                aircraft_location = (selected_aircraft[0], selected_aircraft[1], 0)  # Assuming elevation is 0 for simplicity
+                distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
+                if distance_to_ground <= PROXIMITY_THRESHOLD:
+                    send_alert_to_unit('ground_unit', sheet)
+                else:
+                    st.warning("Aircraft is out of range for ground unit.")
 
-                with col1:
-                    if st.button("Priority to Ground Unit", key=f"ground_unit_{index}"):
-                        distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
-                        if distance_to_ground <= PROXIMITY_THRESHOLD:
-                            send_alert_to_unit('ground_unit', sheet)
-                        else:
-                            st.warning("Aircraft is out of range for ground unit.")
-
-                with col2:
-                    if st.button("Priority to Aircraft", key=f"aircraft_{index}"):
-                        distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
-                        if distance_to_ground <= PROXIMITY_THRESHOLD:
-                            send_alert_to_unit('aircraft', sheet)
-                        else:
-                            st.warning("Aircraft is out of range for aircraft alert.")
+            if st.button("Send Alert to Aircraft"):
+                aircraft_location = (selected_aircraft[0], selected_aircraft[1], 0)  # Assuming elevation is 0 for simplicity
+                distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
+                if distance_to_ground <= PROXIMITY_THRESHOLD:
+                    send_alert_to_unit('aircraft', sheet)
+                else:
+                    st.warning("Aircraft is out of range for aircraft alert.")
 
         else:
             st.error('CSV file must contain latitude, longitude, and elevation columns.')
