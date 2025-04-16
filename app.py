@@ -57,18 +57,6 @@ def calculate_3d_distance(loc1, loc2):
     distance_3d = math.sqrt(surface_distance**2 + elevation_difference**2)
     return distance_3d
 
-def check_aircraft_proximity(ground_unit_location, aircraft_location):
-    """
-    Checks if an aircraft is within a certain proximity to a ground unit.
-    Args:
-    ground_unit_location (tuple): The 3D coordinates of the ground unit.
-    aircraft_location (tuple): The 3D coordinates of the aircraft.
-    Returns:
-    bool: True if the aircraft is within the proximity threshold, False otherwise.
-    """
-    distance_to_aircraft = calculate_3d_distance(ground_unit_location, aircraft_location)
-    return distance_to_aircraft <= PROXIMITY_THRESHOLD
-
 def create_alerts_sheet():
     """
     Creates a Google Sheet to store alerts.
@@ -106,6 +94,7 @@ def login_user(username, password):
         if credentials['username'] == username and credentials['password'] == password:
             st.session_state['user_role'] = role
             st.success(f'Logged in as {role}')
+            st.experimental_rerun()  # Rerun the app to reflect the new user role
             return
     st.error('Incorrect username or password')
 
