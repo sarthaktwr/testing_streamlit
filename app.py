@@ -177,7 +177,7 @@ def create_proximity_map(ground_loc, aircraft_loc):
     connection_layer = pdk.Layer(
         "LineLayer",
         data=pd.DataFrame({
-            'path': [[[ground_loc[1], ground_loc[0]], [aircraft_loc[1], aircraft_loc[0]]],
+            'path': [[ground_loc[1], ground_loc[0]], [aircraft_loc[1], aircraft_loc[0]]],
             'distance': [distance],
             'alt_diff': [alt_diff]
         }),
