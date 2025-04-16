@@ -30,16 +30,16 @@ if 'user_role' not in st.session_state:
 if 'alert_sent' not in st.session_state:
     st.session_state['alert_sent'] = False
 
-def send_alert_to_unit(unit_type):
-    """
-    Sends an alert to a specific unit type.
-    Args:
-        unit_type (str): The type of unit to send the alert to.
-    Returns:
-        None
-    """
-    st.session_state['alerts'][unit_type] = True
-    st.write(f"Alert sent to {unit_type}!")
+# def send_alert_to_unit(unit_type):
+#     """
+#     Sends an alert to a specific unit type.
+#     Args:
+#         unit_type (str): The type of unit to send the alert to.
+#     Returns:
+#         None
+#     """
+#     st.session_state['alerts'][unit_type] = True
+#     st.write(f"Alert sent to {unit_type}!")
 
 def calculate_3d_distance(loc1, loc2):
     """
@@ -148,9 +148,20 @@ def check_for_alerts():
                 return latest_alert
 
 def login_user(username, password):
+    """
+    Logs in a user with the given username and password.
+    
+    Args:
+        username (str): The username of the user to log in.
+        password (str): The password of the user to log in.
+    
+    Returns:
+        None
+    """
     for role, credentials in USER_ROLES.items():
         if credentials['username'] == username and credentials['password'] == password:
             st.session_state['user_role'] = role
+            st.session_state['alerts'] = {'ground_unit': False, 'aircraft': False}
             st.success(f'Logged in as {role}')
             st.rerun()
             return
@@ -359,10 +370,10 @@ else:
                 st.error('Ground Unit Firing. Reroute the current path.')
             else:
                 st.error('Clearance to fly.')
-        # @st.cache(ttl = 30, allow_output_mutation = True, suppress_st_warning = True)
-        # def rerun_in_seconds(seconds):
-        #     time.sleep(seconds)
-        #     return
+        @st.cache(ttl = 30, allow_output_mutation = True, suppress_st_warning = True)
+        def rerun_in_seconds(seconds):
+            time.sleep(seconds)
+            return
         
         # if rerun_in_seconds(30):
         #     st.experimental_rerun()
@@ -373,5 +384,3 @@ if st.session_state['user_role'] is not None:
         st.session_state['user_role'] = None
         st.session_state['alert_sent'] = False
         st.write("You have been logged out.")
-
-
