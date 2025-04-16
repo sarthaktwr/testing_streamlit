@@ -9,14 +9,19 @@ from datetime import datetime
 from google.oauth2.service_account import Credentials
 import json
 
-# Constants and setup (same as before)
-PROXIMITY_THRESHOLD = 4500
+# Constants
+PROXIMITY_THRESHOLD = 4500  # in meters
 USER_ROLES = {
     'command_center': {'username': 'command', 'password': 'center123'},
     'ground_unit': {'username': 'ground', 'password': 'unit123'},
     'aircraft': {'username': 'aircraft', 'password': 'flight123'}
 }
 
+# Custom icons
+GROUND_ICON = "https://img.icons8.com/fluency/48/000000/military-base.png"
+AIRCRAFT_ICON = "https://img.icons8.com/fluency/48/000000/warplane.png"
+
+# Initialize Google Sheets connection
 @st.cache_resource
 def init_gsheet():
     scope = ['https://spreadsheets.google.com/feeds', 
@@ -48,8 +53,10 @@ if 'animation_running' not in st.session_state:
     st.session_state.animation_running = False
 if 'df' not in st.session_state:
     st.session_state.df = None
+if 'last_alert_check' not in st.session_state:
+    st.session_state.last_alert_check = datetime.min
 
-# Utility functions (same as before)
+# Utility functions
 def calculate_3d_distance(loc1, loc2):
     surface_distance = geodesic((loc1[0], loc1[1]), (loc2[0], loc2[1])).meters
     elevation_difference = abs(loc1[2] - loc2[2])
@@ -78,20 +85,157 @@ def check_for_alerts():
     return None
 
 def login_user(username, password):
-    for role, credentials in USER_ROLES.items():
-        if credentials['username'] == username and credentials['password'] == password:
-            st.session_state['user_role'] = role
+    for role, creds in USER_ROLES.items():
+        if creds['username'] == username and creds['password'] == password:
+            st.session_state.user_role = role
             st.success(f'Logged in as {role}')
-            st.rerun()
-            return
+            return True
     st.error('Incorrect username or password')
+    return False
 
 def update_animation():
     if st.session_state.animation_running and st.session_state.df is not None:
         if st.session_state.animation_frame < len(st.session_state.df):
             st.session_state.animation_frame += 1
-            time.sleep(0.01)  # Control animation speed
+            time.sleep(0.3)
             st.rerun()
+
+def create_main_map(view_state, path_data, ground_loc, aircraft_loc=None):
+    layers = []
+    
+    # Flight path layer
+    path_layer = pdk.Layer(
+        "PathLayer",
+        data=pd.DataFrame({'path': [path_data]}),
+        get_path="path",
+        get_color=[255, 0, 0],
+        width_scale=20,
+        width_min_pixels=2
+    )
+    layers.append(path_layer)
+    
+    # Ground unit proximity circle
+    circle_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=pd.DataFrame({
+            'lat': [ground_loc[0]],
+            'lon': [ground_loc[1]]
+        }),
+        get_position=['lon', 'lat'],
+        get_fill_color=[255, 0, 0, 50] if aircraft_loc and check_aircraft_proximity(ground_loc, aircraft_loc) else [0, 0, 255, 50],
+        get_radius=2500,
+        pickable=True
+    )
+    layers.append(circle_layer)
+    
+    # Ground unit marker
+    icon_layer = pdk.Layer(
+        "IconLayer",
+        data=pd.DataFrame({
+            'coordinates': [[ground_loc[1], ground_loc[0]]],
+            'icon': [GROUND_ICON]
+        }),
+        get_icon='icon',
+        get_position='coordinates',
+        get_size=4,
+        size_scale=15,
+        pickable=True
+    )
+    layers.append(icon_layer)
+    
+    # Aircraft marker if provided
+    if aircraft_loc:
+        aircraft_layer = pdk.Layer(
+            "IconLayer",
+            data=pd.DataFrame({
+                'coordinates': [[aircraft_loc[1], aircraft_loc[0]]],
+                'icon': [AIRCRAFT_ICON]
+            }),
+            get_icon='icon',
+            get_position='coordinates',
+            get_size=4,
+            size_scale=15,
+            pickable=True
+        )
+        layers.append(aircraft_layer)
+    
+    return pdk.Deck(
+        layers=layers,
+        initial_view_state=view_state,
+        map_style="mapbox://styles/mapbox/light-v9",
+        tooltip={
+            'html': '<b>Ground Unit</b><br/>Lat: {lat:.4f}°<br/>Lon: {lon:.4f}°',
+            'style': {'backgroundColor': 'white', 'color': 'black'}
+        }
+    )
+
+def create_proximity_map(ground_loc, aircraft_loc):
+    distance = calculate_3d_distance(ground_loc, aircraft_loc)
+    alt_diff = aircraft_loc[2] - ground_loc[2]
+    
+    # Line connecting ground unit and aircraft
+    connection_layer = pdk.Layer(
+        "LineLayer",
+        data=pd.DataFrame({
+            'path': [[[ground_loc[1], ground_loc[0]], [aircraft_loc[1], aircraft_loc[0]]],
+            'distance': [distance],
+            'alt_diff': [alt_diff]
+        }),
+        get_path="path",
+        get_color=[255, 165, 0, 200],
+        get_width=5,
+        pickable=True
+    )
+    
+    return pdk.Deck(
+        layers=[
+            pdk.Layer(
+                "ScatterplotLayer",
+                data=pd.DataFrame({
+                    'lat': [ground_loc[0]],
+                    'lon': [ground_loc[1]]
+                }),
+                get_position=['lon', 'lat'],
+                get_fill_color=[255, 0, 0, 30],
+                get_radius=2500,
+                pickable=True
+            ),
+            pdk.Layer(
+                "IconLayer",
+                data=pd.DataFrame({
+                    'coordinates': [[ground_loc[1], ground_loc[0]]],
+                    'icon': [GROUND_ICON]
+                }),
+                get_icon='icon',
+                get_position='coordinates',
+                get_size=4,
+                size_scale=15
+            ),
+            pdk.Layer(
+                "IconLayer",
+                data=pd.DataFrame({
+                    'coordinates': [[aircraft_loc[1], aircraft_loc[0]]],
+                    'icon': [AIRCRAFT_ICON]
+                }),
+                get_icon='icon',
+                get_position='coordinates',
+                get_size=4,
+                size_scale=15
+            ),
+            connection_layer
+        ],
+        initial_view_state=pdk.ViewState(
+            latitude=(ground_loc[0] + aircraft_loc[0])/2,
+            longitude=(ground_loc[1] + aircraft_loc[1])/2,
+            zoom=14,
+            pitch=50
+        ),
+        map_style="mapbox://styles/mapbox/light-v9",
+        tooltip={
+            'html': '<b>Proximity Alert</b><br>Distance: {distance:.0f}m<br>Alt Diff: {alt_diff:.0f}m',
+            'style': {'backgroundColor': 'white', 'color': 'black'}
+        }
+    )
 
 def main():
     if st.session_state.user_role is None:
@@ -128,7 +272,7 @@ def main():
                 st.session_state.animation_frame = 0
                 st.session_state.animation_running = True
             
-            # Start/stop animation controls
+            # Animation controls
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("Start Animation"):
@@ -137,11 +281,9 @@ def main():
                 if st.button("Stop Animation"):
                     st.session_state.animation_running = False
             
-            # Display current frame
             current_frame = st.session_state.animation_frame
             st.write(f"Frame: {current_frame}/{len(st.session_state.df)}")
             
-            # Get current aircraft position
             if current_frame < len(st.session_state.df):
                 aircraft_loc = (
                     st.session_state.df.iloc[current_frame]['latitude_wgs84(deg)'],
@@ -149,8 +291,9 @@ def main():
                     st.session_state.df.iloc[current_frame]['elevation_wgs84(m)']
                 )
                 
-                # Check proximity
-                if check_aircraft_proximity(ground_loc, aircraft_loc):
+                in_proximity = check_aircraft_proximity(ground_loc, aircraft_loc)
+                
+                if in_proximity:
                     st.warning("Aircraft in proximity!")
                     col1, col2 = st.columns(2)
                     
@@ -162,7 +305,7 @@ def main():
                         if send_alert('aircraft'):
                             st.success("Alert sent to Aircraft!")
                 
-                # Display map
+                # Create view state
                 view_state = pdk.ViewState(
                     latitude=st.session_state.df['latitude_wgs84(deg)'].mean(),
                     longitude=st.session_state.df['longitude_wgs84(deg)'].mean(),
@@ -170,24 +313,22 @@ def main():
                     pitch=50
                 )
                 
-                path_layer = pdk.Layer(
-                    "PathLayer",
-                    data=pd.DataFrame({
-                        'path': [st.session_state.df.iloc[:current_frame+1][
-                            ['longitude_wgs84(deg)', 'latitude_wgs84(deg)']
-                        ].values.tolist()]
-                    }),
-                    get_path="path",
-                    get_color=[255, 0, 0],
-                    width_scale=20,
-                    width_min_pixels=2
-                )
+                # Get path data
+                path_data = st.session_state.df.iloc[:current_frame+1][
+                    ['longitude_wgs84(deg)', 'latitude_wgs84(deg)']
+                ].values.tolist()
                 
-                st.pydeck_chart(pdk.Deck(
-                    layers=[path_layer],
-                    initial_view_state=view_state,
-                    map_style="mapbox://styles/mapbox/light-v9"
-                ))
+                # Display maps
+                if in_proximity:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write("**Main Map**")
+                        st.pydeck_chart(create_main_map(view_state, path_data, ground_loc, aircraft_loc))
+                    with col2:
+                        st.write("**Proximity View**")
+                        st.pydeck_chart(create_proximity_map(ground_loc, aircraft_loc))
+                else:
+                    st.pydeck_chart(create_main_map(view_state, path_data, ground_loc))
             
             # Continue animation if running
             if st.session_state.animation_running:
