@@ -133,19 +133,41 @@ def send_alert_to_unit(unit_type, sheet):
     st.session_state['alert_sent'] = True
     st.write(f"Alert sent to {unit_type}!")
 
+def clear_old_alerts():
+    """Clears alerts older than 30 seconds from the sheet."""
+    sheet = client.open('Aircraft Proximity Alert System').sheet1
+    alerts = sheet.get_all_records()
+    current_time = datetime.utcnow()
+    
+    # Filter alerts to keep only recent ones
+    recent_alerts = []
+    for alert in alerts:
+        alert_time = datetime.fromisoformat(alert['Time'])
+        if (current_time - alert_time).total_seconds() <= 30:
+            recent_alerts.append(alert)
+    
+    # Clear sheet and rewrite only recent alerts
+    if len(recent_alerts) < len(alerts):
+        sheet.clear()
+        sheet.append_row(['Time', 'Alert', 'Unit Type'])
+        for alert in recent_alerts:
+            sheet.append_row([alert['Time'], alert['Alert'], alert['Unit Type']])
+
 def check_for_alerts():
     """
     Checks if there are any alerts in the Google Sheet.
     Returns:
         bool: True if there are alerts, False otherwise.
     """
-    sheet = client.open('Aircraft Proximity Alert System').sheet1
+   sheet = client.open('Aircraft Proximity Alert System').sheet1
     alerts = sheet.get_all_records()
     if alerts:
         latest_alert = alerts[-1]
-        # latest_alert['Unit Type'] = 'Ground Unit'
-        if latest_alert['Alert'] == 'True':
-                return latest_alert
+        # Check if alert is recent (within last 30 seconds)
+        alert_time = datetime.fromisoformat(latest_alert['Time'])
+        if (datetime.utcnow() - alert_time).total_seconds() <= 30 and latest_alert['Alert'] == 'True':
+            return latest_alert
+    return None
 
 def login_user(username, password):
     """
@@ -179,6 +201,7 @@ if st.session_state['user_role'] is None:
 
 else:
     if st.session_state['user_role'] == 'command_center':
+        clear_old_alerts()
         # Command center interface
         st.title('Command Center Dashboard')
         st.title('Aircraft Proximity Alert System')
@@ -243,6 +266,7 @@ else:
                 aircraft_alerts = []
 
                 # Loop through the rows of the DataFrame to animate the flight path
+                previous_in_proximity = False
                 for index, row in df.iterrows():
                     # Append the current point to the animated path
                     animated_path.append(row['path'])
@@ -302,8 +326,18 @@ else:
                         row['elevation_wgs84(m)']
                     )
                     aircraft_location = (row['latitude_wgs84(deg)'], row['longitude_wgs84(deg)'], row['elevation_wgs84(m)'])
-                    alert = check_aircraft_proximity(ground_unit_location, aircraft_location)
+                    current_in_proximity = check_aircraft_proximity(ground_unit_location, aircraft_location)
                     distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
+                    
+                    # If aircraft just exited proximity zone
+                    if previous_in_proximity and not current_in_proximity:
+                        current_time = datetime.utcnow().isoformat()
+                        sheet.append_row([current_time, 'False', 'clear'])  # Send clear signal
+                        
+                    previous_in_proximity = current_in_proximity
+                    # aircraft_location = (row['latitude_wgs84(deg)'], row['longitude_wgs84(deg)'], row['elevation_wgs84(m)'])
+                    # alert = check_aircraft_proximity(ground_unit_location, aircraft_location)
+                    # distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
 
                     # Add an alert if the aircraft is within 4.5 km
                     if distance_to_ground <= 4500:
@@ -344,39 +378,33 @@ else:
             else:
                 st.error('CSV file must contain latitude, longitude, and elevation columns.')
 
+# Foor ground unit:
     elif st.session_state['user_role'] == 'ground_unit':
-        # Ground unit interface
         st.title('Ground Unit Dashboard')
         system_alerts = check_for_alerts()
-        if system_alerts != None:
+        if system_alerts is not None:
             if system_alerts['Unit Type'] == 'ground_unit':
                 st.error('Keep Firing.')
-            else:
-                st.error('Friendly aircraft approaching. Stop Firing !')
-        @st.cache(ttl = 30, allow_output_mutation = True, suppress_st_warning = True)
-        def rerun_in_seconds(seconds):
-            time.sleep(seconds)
-            return
-        
-        # if rerun_in_seconds(30):
-        #     st.experimental_rerun()
-
+            elif system_alerts['Unit Type'] == 'aircraft':
+                st.error('Friendly aircraft approaching. Stop Firing!')
+            elif system_alerts['Unit Type'] == 'clear':
+                st.success('No threats detected. Standby.')
+        else:
+            st.success('No active alerts.')
+            
+    # Similarly for aircraft:
     elif st.session_state['user_role'] == 'aircraft':
-        # Aircraft interface
         st.title('Aircraft Dashboard')
         system_alerts = check_for_alerts()
-        if system_alerts != None:
+        if system_alerts is not None:
             if system_alerts['Unit Type'] == 'ground_unit':
                 st.error('Ground Unit Firing. Reroute the current path.')
-            else:
+            elif system_alerts['Unit Type'] == 'aircraft':
                 st.error('Clearance to fly.')
-        @st.cache(ttl = 30, allow_output_mutation = True, suppress_st_warning = True)
-        def rerun_in_seconds(seconds):
-            time.sleep(seconds)
-            return
-        
-        # if rerun_in_seconds(30):
-        #     st.experimental_rerun()
+            elif system_alerts['Unit Type'] == 'clear':
+                st.success('Clear path ahead.')
+        else:
+            st.success('No active alerts.')
 
 # Logout button
 if st.session_state['user_role'] is not None:
