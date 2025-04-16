@@ -188,7 +188,6 @@ else:
             create_alerts_sheet()
             sheet = create_alerts_sheet()
         # Input fields for the ground unit location
-        st.subheader('Ground Unit Location')
         ground_lat = st.number_input('Latitude (deg)', value=0.0, format='%f')
         ground_lon = st.number_input('Longitude (deg)', value=0.0, format='%f')
         ground_elev = st.number_input('Elevation (meters)', value=0.0, format='%f')
