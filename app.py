@@ -57,6 +57,18 @@ def calculate_3d_distance(loc1, loc2):
     distance_3d = math.sqrt(surface_distance**2 + elevation_difference**2)
     return distance_3d
 
+def check_aircraft_proximity(ground_unit_location, aircraft_location):
+    """
+    Checks if an aircraft is within a certain proximity to a ground unit.
+    Args:
+    ground_unit_location (tuple): The 3D coordinates of the ground unit.
+    aircraft_location (tuple): The 3D coordinates of the aircraft.
+    Returns:
+    bool: True if the aircraft is within the proximity threshold, False otherwise.
+    """
+    distance_to_aircraft = calculate_3d_distance(ground_unit_location, aircraft_location)
+    return distance_to_aircraft <= PROXIMITY_THRESHOLD
+
 def create_alerts_sheet():
     """
     Creates a Google Sheet to store alerts.
@@ -219,13 +231,25 @@ else:
                 # Render the updated map in the same placeholder
                 map_placeholder.pydeck_chart(r)
 
-                # Display buttons dynamically
+                # Loop through the rows of the DataFrame to animate the flight path
                 for index, row in df.iterrows():
+                    # Calculate proximity for the current aircraft position
                     aircraft_location = (
                         row['latitude_wgs84(deg)'],
                         row['longitude_wgs84(deg)'],
                         row['elevation_wgs84(m)']
                     )
+                    distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
+
+                    # Add an alert if the aircraft is within 4.5 km
+                    if distance_to_ground <= 4500:
+                        if not st.session_state['alert_sent_ground']:
+                            st.session_state['alert_sent_ground'] = True
+                            send_alert_to_unit('ground_unit', sheet)
+
+                        if not st.session_state['alert_sent_aircraft']:
+                            st.session_state['alert_sent_aircraft'] = True
+                            send_alert_to_unit('aircraft', sheet)
 
                     # Display buttons dynamically
                     with button_placeholder.container():
@@ -233,19 +257,18 @@ else:
 
                         with col1:
                             if st.button("Priority to Ground Unit", key=f"ground_unit_{index}"):
-                                distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
-                                if distance_to_ground <= PROXIMITY_THRESHOLD:
+                                if not st.session_state['alert_sent_ground']:
                                     send_alert_to_unit('ground_unit', sheet)
-                                else:
-                                    st.warning("Aircraft is out of range for ground unit.")
+                                    st.session_state['alert_sent_ground'] = True
 
                         with col2:
                             if st.button("Priority to Aircraft", key=f"aircraft_{index}"):
-                                distance_to_ground = calculate_3d_distance(ground_unit_location, aircraft_location)
-                                if distance_to_ground <= PROXIMITY_THRESHOLD:
+                                if not st.session_state['alert_sent_aircraft']:
                                     send_alert_to_unit('aircraft', sheet)
-                                else:
-                                    st.warning("Aircraft is out of range for aircraft alert.")
+                                    st.session_state['alert_sent_aircraft'] = True
+
+                    # Add a delay to create the animation effect
+                    time.sleep(0.1)
 
             else:
                 st.error('CSV file must contain latitude, longitude, and elevation columns.')
